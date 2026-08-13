@@ -9,7 +9,7 @@ allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-
 - **Version:** 0.1.0
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
-- **Not a git repo yet.** No commits have been made; `git init` when you want history.
+- **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
 
 ---
 
@@ -43,7 +43,7 @@ pwsh -File packaging/build-installer.ps1
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-118 checks currently pass. Inno Setup 6 is **not installed on this machine**; `build-installer.ps1`
+137 checks currently pass. Inno Setup 6 is **not installed on this machine**; `build-installer.ps1`
 detects that and tells you how to get it (`winget install JRSoftware.InnoSetup`).
 
 ---
@@ -242,7 +242,68 @@ self-test parses the `.iss` and fails if the two lists drift.
 
 ---
 
+## Auto-update
+
+`Update/AppUpdateService.cs` polls the public repo's `releases/latest` endpoint, at most once a day
+(timestamp in `%APPDATA%\ImageViewer\update-check.txt`). The check is scheduled from
+`ContentRendered` on a 4-second idle-priority timer, so it is **never on the startup path**, and it
+fails silently when offline. If a newer release exists the user gets a toast; **Ctrl+U** then asks
+for confirmation before anything is downloaded or run.
+
+Rules that must not be relaxed:
+
+- **Download hosts are allow-listed** (`github.com`, `objects.githubusercontent.com`, and two
+  siblings), HTTPS only. The updater fetches and then *executes* a file, so the destination is never
+  taken on trust from the API response. The self-test proves lookalike domains, plain HTTP and
+  `file://` are all rejected.
+- **The downloaded size is checked** against the asset's declared size before the file is run; a
+  partial download is deleted rather than executed.
+- Prereleases are skipped. A release with no `*setup*.exe` asset opens the release page instead.
+- `HttpClient` is `Lazy` — not just tidiness. It was originally an eager static initialiser declared
+  *before* `CurrentVersion`, read a null version, and threw `TypeInitializationException`. Static
+  fields initialise in declaration order.
+
+`RepositoryOwner`/`RepositoryName` in `AppUpdateService` are the only place the repo is named.
+
+**Releasing:** push a tag and `.github/workflows/release.yml` does the rest — it stamps the version
+into the csproj (so the shipped binary reports the same number the updater compares), runs the full
+self-test *and* the assembly-load check, builds the portable zip and the installer, and attaches
+both to the release.
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The workflow has **never been run**; it is written but unproven.
+
+---
+
+## Package size
+
+The portable build is ~180 MB (80 MB zipped). It was 317 MB before two fixes, both in the csproj:
+
+- **Native symbol files are deleted after publish.** SkiaSharp and HarfBuzz ship `.pdb` files for
+  their native libraries and the SDK copies them into the output — 84 MB and 22 MB respectively, for
+  files never read at runtime.
+- **ReadyToRun is applied only to the application.** Precompiling the fallback decoders added ~25 MB
+  (ImageSharp alone went 2 MB → 30 MB) to speed up code that by design only runs for exotic files
+  already on the slow path. Excluding them also measurably *improved* startup, since there is less
+  to load.
+
+---
+
 ## Session log
+
+### 2026-08-14 — Auto-update, public repo, package size
+- Added `AppUpdateService` + `UpdateInfo` and the Ctrl+U flow. Owner asked for auto-update mid-build.
+- **Published to <https://github.com/crmaris/image-viewer> as a public MIT repo** at the owner's
+  request. Added `README.md`, `LICENSE`, `.gitignore`, `.gitattributes` and the release workflow.
+  Scanned for secrets before publishing; nothing sensitive is in the tree.
+- Fixed a `TypeInitializationException` from static field ordering in `AppUpdateService`.
+- **Cut the portable build from 317 MB to 180 MB** — see "Package size" above.
+- Note: the repo uses **GitHub Releases directly**, not the `private-repo-autoupdate` pattern from
+  the global skills. That pattern exists for apps whose *source* is private; this one is public, so
+  the asset belongs on its own Releases page.
 
 ### 2026-08-14 — Phases 3–5: decoder tiers, image functions, packaging
 - Added tiers 2–4 (ImageSharp / Svg.Skia / Magick.NET) behind `DecoderChain`, plus `FormatSniffer`
@@ -269,9 +330,14 @@ self-test parses the `.iss` and fails if the two lists drift.
 
 ## Pending / not done
 
-- **No git history.** `git init` and an initial commit would be worthwhile.
+- **No release has been published**, so the updater has nothing to find yet. The first
+  `git tag v0.1.0 && git push origin v0.1.0` will exercise the workflow for the first time — watch
+  it, because it has never run.
 - **Installer never compiled** — Inno Setup is not installed here. The `.iss` is written and its
-  association list is test-verified, but the setup executable has not been produced or run.
+  association list is test-verified, but the setup executable has not been produced or run. The CI
+  workflow installs Inno Setup via Chocolatey; that step is also unproven.
+- **The updater's happy path is untested end to end.** Parsing and URL validation are covered by the
+  self-test, but no real download or install has happened, because no release exists.
 - **Portable zip built and verified; installer not.**
 - **NativeAOT launcher stub** for a ~20 ms handoff: designed, deliberately not built.
 - **Settings are not persisted.** `_slideshowSeconds`, the info/filmstrip toggles and window size

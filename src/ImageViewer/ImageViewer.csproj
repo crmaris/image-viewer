@@ -58,4 +58,34 @@
     <PackageReference Include="Magick.NET-Q8-x64" Version="14.16.0" />
   </ItemGroup>
 
+  <!--
+    ReadyToRun only the application. Precompiling the fallback decoders inflated the publish output
+    by roughly 25 MB (ImageSharp alone went from ~2 MB to ~30 MB) to speed up code that, by design,
+    only ever runs for exotic files that are already on the slow path. The hot path is WIC, and
+    ImageViewer.dll is still R2R-compiled.
+  -->
+  <ItemGroup>
+    <PublishReadyToRunExclude Include="SixLabors.ImageSharp.dll" />
+    <PublishReadyToRunExclude Include="Magick.NET-Q8-x64.dll" />
+    <PublishReadyToRunExclude Include="Magick.NET.Core.dll" />
+    <PublishReadyToRunExclude Include="SkiaSharp.dll" />
+    <PublishReadyToRunExclude Include="HarfBuzzSharp.dll" />
+    <PublishReadyToRunExclude Include="Svg.Skia.dll" />
+    <PublishReadyToRunExclude Include="Svg.Model.dll" />
+    <PublishReadyToRunExclude Include="ShimSkiaSharp.dll" />
+  </ItemGroup>
+
+  <!--
+    SkiaSharp and HarfBuzz ship debug symbols for their native libraries and the SDK copies them
+    into the publish folder: 84 MB for libSkiaSharp.pdb and 22 MB for libHarfBuzzSharp.pdb. They are
+    dead weight in a release package - a third of the download for files never read at runtime.
+  -->
+  <Target Name="RemoveNativeSymbolsFromPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_UnwantedSymbols Include="$(PublishDir)**\*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(_UnwantedSymbols)" ContinueOnError="true" />
+    <Message Importance="high" Text="Removed @(_UnwantedSymbols->Count()) symbol file(s) from the publish output." />
+  </Target>
+
 </Project>
