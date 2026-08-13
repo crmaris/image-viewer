@@ -1,0 +1,99 @@
+# Builds the portable zip and the installer, and attaches both to a GitHub Release.
+#
+# The in-app updater looks for an asset whose name contains "setup" and ends in ".exe", so the
+# installer produced here is what it downloads. Publishing a release without that asset is not an
+# error - the updater falls back to opening the release page in a browser.
+#
+# Trigger by pushing a version tag:
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# The tag is the source of truth for the version: it is written into the csproj before building, so
+# the running app reports the same number the updater compares against.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v (e.g. 0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $env:GITHUB_REF -replace '^refs/tags/v', ''
+          } else {
+            '${{ github.event.inputs.version }}'
+          }
+          if (-not $version) { throw 'No version could be determined.' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Building version $version"
+
+      - name: Stamp the version into the project
+        shell: pwsh
+        run: |
+          # Keeps the built binary's version in step with the tag, so the updater's comparison is
+          # against what actually shipped rather than whatever was last committed.
+          $csproj = 'src/ImageViewer/ImageViewer.csproj'
+          $text = Get-Content $csproj -Raw
+          $text = $text -replace '<Version>[^<]*</Version>', "<Version>${{ steps.version.outputs.version }}</Version>"
+          Set-Content $csproj $text -NoNewline
+          Select-String -Path $csproj -Pattern '<Version>'
+
+      - name: Run the self-test
+        shell: pwsh
+        run: |
+          # The corpus has to be generated first, or the fallback decoder tiers are never exercised.
+          dotnet run --project tests/ImageViewer.SelfTest -- --make-corpus testimages
+          dotnet run --project tests/ImageViewer.SelfTest -- testimages
+
+      - name: Verify the heavy decoders stay unloaded
+        shell: pwsh
+        run: |
+          # Must be a separate process: the suite above deliberately loads every tier.
+          dotnet run --project tests/ImageViewer.SelfTest -- --assembly-check testimages
+
+      - name: Build the portable package
+        shell: pwsh
+        run: pwsh -File packaging/build-portable.ps1
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the installer
+        shell: pwsh
+        run: pwsh -File packaging/build-installer.ps1 -SkipPublish
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Image Viewer ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            build/ImageViewer-*-setup.exe
+            build/ImageViewer-portable-*.zip

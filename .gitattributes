@@ -1,0 +1,20 @@
+# Normalise line endings so the repo stays consistent regardless of who clones it.
+* text=auto
+
+# Windows-only tooling that must keep CRLF in the working tree.
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.iss   text eol=crlf
+
+# Anything the toolchain reads on Linux runners.
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+
+# Binary; never touch.
+*.ico   binary
+*.png   binary
+*.jpg   binary
+*.exe   binary
+*.zip   binary

@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <AssemblyName>ImageViewer</AssemblyName>
+    <RootNamespace>ImageViewer</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Regenerate with packaging/make-icon.ps1; do not hand-edit the .ico. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+
+    <!-- We provide our own Main in Program.cs so the single-instance handoff can
+         happen before any WPF type is touched. There is no App.xaml on purpose:
+         skipping the application resource dictionary shaves BAML parsing off startup. -->
+    <StartupObject>ImageViewer.Program</StartupObject>
+
+    <!-- Startup cost reduction. R2R only takes effect on publish. -->
+    <TieredPGO>true</TieredPGO>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!-- NOT InvariantGlobalization: filenames here are routinely Greek, and dropping
+         ICU would break culture-aware comparison and casing on those paths. -->
+
+    <Version>0.1.0</Version>
+    <Product>Image Viewer</Product>
+    <Company>Aris Mpitziopoulos</Company>
+    <Copyright>Copyright © 2026</Copyright>
+  </PropertyGroup>
+
+  <!--
+    Fallback decoder tiers. Pinned rather than floating so a build is reproducible.
+
+    None of these is on the hot path: WIC (built into Windows, no package needed) handles the
+    overwhelming majority of files, and the CLR does not load an assembly until code referencing
+    its types actually runs. Keeping every reference to these libraries inside method bodies -
+    never in a field, constructor or signature that startup touches - is what keeps their load
+    cost off normal viewing. ImageViewer.SelfTest asserts this holds.
+  -->
+  <ItemGroup>
+    <!-- Tier 2: pure managed, guarantees the common formats work with no Windows codecs installed.
+         Pinned to the 2.1.x line deliberately. ImageSharp 3.0 changed from Apache-2.0 to the Six
+         Labors Split License, and building against 4.x emits a "no license found" warning and
+         requires a commercial licence for most use. 2.1.13 is the last Apache-2.0 release and
+         still decodes JPEG, PNG, GIF, BMP, TIFF, WebP and TGA, which is everything this tier is
+         for. The only loss is QOI, which the Magick.NET tier picks up anyway. -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.13" />
+    <!-- Tier 3: SVG rasterisation (pulls in SkiaSharp). -->
+    <PackageReference Include="Svg.Skia" Version="5.2.1" />
+    <!-- Tier 4: last-resort catch-all - PSD, XCF, EXR, JP2 and a few hundred more.
+         Q8 rather than Q16: half the memory per pixel and faster, and 8 bits per channel is all a
+         screen can show anyway. -->
+    <PackageReference Include="Magick.NET-Q8-x64" Version="14.16.0" />
+  </ItemGroup>
+
+</Project>
