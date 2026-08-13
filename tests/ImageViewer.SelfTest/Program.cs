@@ -30,6 +30,15 @@ public static class Program
         var dir = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal))
                   ?? Path.Combine(AppContext.BaseDirectory, "testimages");
 
+        // Live network check, kept out of the normal suite: a test that fails when the wifi drops
+        // is worse than no test.
+        if (mode == "--check-update")
+        {
+            return LiveUpdateCheck
+                .RunAsync(args.Contains("--download"))
+                .GetAwaiter().GetResult();
+        }
+
         if (mode == "--make-corpus")
         {
             Console.WriteLine($"Generating exotic-format test files in {dir}");

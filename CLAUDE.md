@@ -274,7 +274,20 @@ both to the release.
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-The workflow has **never been run**; it is written but unproven.
+The workflow ran clean on its first attempt for v0.1.0 (2m19s), including the Chocolatey install of
+Inno Setup and the installer build.
+
+### Verifying the updater against a real release
+
+`--check-update` talks to the live API. Build as an artificially old version so there is something
+to discover, and add `--download` to exercise the size verification and partial-file handling:
+
+```bash
+dotnet run --project tests/ImageViewer.SelfTest -p:Version=0.0.1 -- --check-update --download
+```
+
+Kept out of the normal suite deliberately: a test that fails when the network drops is worse than no
+test. Note that running it writes the throttle timestamp, so the app will skip its next daily check.
 
 ---
 
@@ -293,6 +306,15 @@ The portable build is ~180 MB (80 MB zipped). It was 317 MB before two fixes, bo
 ---
 
 ## Session log
+
+### 2026-08-14 — First release, updater verified live
+- **Released v0.1.0.** The workflow passed on its first run (2m19s), producing
+  `ImageViewer-0.1.0-setup.exe` (58.4 MB) and `ImageViewer-portable-win-x64.zip` (80.2 MB).
+- **Fixed a corpus bug that would have broken CI immediately.** `--make-corpus` only generated the
+  exotic formats; the everyday images came from throwaway scripts that were never committed, so the
+  suite only passed on the machine it was written on. `Corpus.Generate` now produces all 31 files.
+- **Verified the updater against the real release** with the new `--check-update --download` mode:
+  found v0.1.0 in 1.26s, selected the right asset, and downloaded 61,271,768 bytes intact.
 
 ### 2026-08-14 — Auto-update, public repo, package size
 - Added `AppUpdateService` + `UpdateInfo` and the Ctrl+U flow. Owner asked for auto-update mid-build.
@@ -330,15 +352,14 @@ The portable build is ~180 MB (80 MB zipped). It was 317 MB before two fixes, bo
 
 ## Pending / not done
 
-- **No release has been published**, so the updater has nothing to find yet. The first
-  `git tag v0.1.0 && git push origin v0.1.0` will exercise the workflow for the first time — watch
-  it, because it has never run.
-- **Installer never compiled** — Inno Setup is not installed here. The `.iss` is written and its
-  association list is test-verified, but the setup executable has not been produced or run. The CI
-  workflow installs Inno Setup via Chocolatey; that step is also unproven.
-- **The updater's happy path is untested end to end.** Parsing and URL validation are covered by the
-  self-test, but no real download or install has happened, because no release exists.
-- **Portable zip built and verified; installer not.**
+- **The installer has never actually been run.** `ImageViewer-0.1.0-setup.exe` is built and
+  published, and its association list is test-verified, but nobody has installed from it. The
+  install, the "Open with" registration and the uninstaller are all unexercised.
+- **The updater's final step is untested.** Discovery, asset selection, host validation and download
+  are verified against the real release; `LaunchInstaller` — handing the file to the shell and
+  closing — has deliberately never been executed.
+- **Inno Setup is not installed on this machine**, so local installer builds fail by design.
+  CI builds it instead. Install locally with `winget install JRSoftware.InnoSetup` if needed.
 - **NativeAOT launcher stub** for a ~20 ms handoff: designed, deliberately not built.
 - **Settings are not persisted.** `_slideshowSeconds`, the info/filmstrip toggles and window size
   reset each launch. `Settings/AppSettings.cs` was planned and not written.
