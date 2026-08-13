@@ -552,6 +552,23 @@ public static class Program
             Check("the SupportedTypes extension list could be parsed", false, "SupportedExtensions not found");
         }
 
+        // Capabilities + RegisteredApplications is what lists the app BY NAME in Settings >
+        // Default apps. Without it, searching Settings for "Image Viewer" finds nothing, even
+        // though the right-click Open With menu works.
+        Check("installer registers a Default Programs Capabilities block",
+            text.Contains(@"Software\ImageViewer\Capabilities", StringComparison.Ordinal) &&
+            text.Contains("ApplicationName", StringComparison.Ordinal),
+            "the app will not be listed in Settings > Default apps");
+
+        Check("installer adds itself to RegisteredApplications",
+            text.Contains("RegisteredApplications", StringComparison.Ordinal));
+
+        // A pointer left behind after uninstall lists a phantom app in Settings forever.
+        Check("uninstall removes the Capabilities and RegisteredApplications entries",
+            text.Contains(@"RegDeleteKeyIncludingSubkeys(RootKey, 'Software\ImageViewer')", StringComparison.Ordinal) &&
+            text.Contains("RegDeleteValue(RootKey, 'Software\\RegisteredApplications'", StringComparison.Ordinal),
+            "uninstall would leave a phantom entry in Settings");
+
         Check("installer references the generated icon",
             text.Contains("app.ico", StringComparison.OrdinalIgnoreCase));
 

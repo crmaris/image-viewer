@@ -164,19 +164,33 @@ const
     '.rwl .x3f .mrw .erf .kdc .dcr ' +
     '.svg .svgz .psd .tga .jp2 .exr .qoi';
 
-procedure RegisterSupportedTypes();
-var
-  RootKey: Integer;
-  KeyPath, Remaining, Extension: String;
-  SpaceAt: Integer;
+function GetRegistrationRoot(): Integer;
 begin
   { Match the root the rest of the installer used, so a per-user install stays per-user. }
   if IsAdminInstallMode then
-    RootKey := HKEY_LOCAL_MACHINE
+    Result := HKEY_LOCAL_MACHINE
   else
-    RootKey := HKEY_CURRENT_USER;
+    Result := HKEY_CURRENT_USER;
+end;
 
-  KeyPath := 'Software\Classes\Applications\ImageViewer.exe\SupportedTypes';
+{
+  Writes the two per-extension registrations in one pass:
+
+  SupportedTypes    - the shell consults this when building the Open With menu.
+  FileAssociations  - part of the Default Programs "Capabilities" block, which is what lists the
+                      application BY NAME in Settings > Default apps so every file type it handles
+                      can be reassigned in one place. Without it, searching Settings for
+                      "Image Viewer" finds nothing.
+}
+procedure RegisterExtensions();
+var
+  RootKey: Integer;
+  SupportedPath, AssocPath, Remaining, Extension: String;
+  SpaceAt: Integer;
+begin
+  RootKey := GetRegistrationRoot();
+  SupportedPath := 'Software\Classes\Applications\ImageViewer.exe\SupportedTypes';
+  AssocPath := 'Software\ImageViewer\Capabilities\FileAssociations';
 
   { Split on spaces by hand rather than with StringSplitEx, which only exists in Inno Setup 6.3
     and later. This works on any 6.x compiler. }
@@ -188,15 +202,40 @@ begin
     Remaining := Trim(Copy(Remaining, SpaceAt + 1, Length(Remaining))) + ' ';
 
     if Extension <> '' then
-      RegWriteStringValue(RootKey, KeyPath, Extension, '');
+    begin
+      RegWriteStringValue(RootKey, SupportedPath, Extension, '');
+      RegWriteStringValue(RootKey, AssocPath, Extension, 'ImageViewer.Image');
+    end;
   until Trim(Remaining) = '';
+end;
+
+{ The Capabilities block itself, plus the pointer that makes Windows read it. }
+procedure RegisterCapabilities();
+var
+  RootKey: Integer;
+  CapPath: String;
+begin
+  RootKey := GetRegistrationRoot();
+  CapPath := 'Software\ImageViewer\Capabilities';
+
+  RegWriteStringValue(RootKey, CapPath, 'ApplicationName', '{#AppName}');
+  RegWriteStringValue(RootKey, CapPath, 'ApplicationDescription',
+    'A plain, fast image viewer. Opens practically any image format.');
+  RegWriteStringValue(RootKey, CapPath, 'ApplicationIcon',
+    ExpandConstant('{app}\{#AppExeName}') + ',0');
+
+  RegWriteStringValue(RootKey, 'Software\RegisteredApplications',
+    '{#AppName}', 'Software\ImageViewer\Capabilities');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   { Only once the files are in place, and only if the user opted into associations. }
   if (CurStep = ssPostInstall) and WizardIsTaskSelected('associate') then
-    RegisterSupportedTypes();
+  begin
+    RegisterCapabilities();
+    RegisterExtensions();
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -205,12 +244,12 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    if IsAdminInstallMode then
-      RootKey := HKEY_LOCAL_MACHINE
-    else
-      RootKey := HKEY_CURRENT_USER;
+    RootKey := GetRegistrationRoot();
 
-    { [Registry] cleans up what it wrote; this key was created in code so it must be removed here. }
+    { [Registry] cleans up what it wrote; these were created in code so they must go here.
+      Leaving the RegisteredApplications pointer behind would list a phantom app in Settings. }
     RegDeleteKeyIncludingSubkeys(RootKey, 'Software\Classes\Applications\ImageViewer.exe');
+    RegDeleteKeyIncludingSubkeys(RootKey, 'Software\ImageViewer');
+    RegDeleteValue(RootKey, 'Software\RegisteredApplications', '{#AppName}');
   end;
 end;

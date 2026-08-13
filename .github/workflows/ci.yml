@@ -1,0 +1,58 @@
+# Runs on every push. Builds, tests, and compiles the installer WITHOUT publishing anything.
+#
+# The installer compile matters as much as the tests: ImageViewer.iss contains a [Code] section in
+# Pascal that nothing else validates, so without this a syntax error there would stay invisible
+# until a release was attempted - the worst possible moment to discover it.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ['**']      # tag pushes are the Release workflow's job
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: dotnet build src/ImageViewer/ImageViewer.csproj -c Release --nologo
+
+      - name: Generate the test corpus
+        # Without this the fallback decoder tiers are never exercised.
+        run: dotnet run --project tests/ImageViewer.SelfTest -- --make-corpus testimages
+
+      - name: Self-test
+        run: dotnet run --project tests/ImageViewer.SelfTest -- testimages
+
+      - name: Verify the heavy decoders stay unloaded
+        # Must be a separate process: the suite above deliberately loads every tier.
+        run: dotnet run --project tests/ImageViewer.SelfTest -- --assembly-check testimages
+
+      - name: Publish the portable build
+        run: pwsh -File packaging/build-portable.ps1 -SkipZip
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile the installer
+        # Validates the [Code] section and the 55 file associations. Nothing is published.
+        run: pwsh -File packaging/build-installer.ps1 -SkipPublish
+
+      - name: Confirm the installer was produced
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem build -Filter 'ImageViewer-*-setup.exe' -ErrorAction SilentlyContinue
+          if (-not $setup) { throw 'No installer was produced.' }
+          Write-Host ("Installer OK: {0} ({1:N1} MB)" -f $setup.Name, ($setup.Length / 1MB))
