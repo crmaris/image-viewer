@@ -46,6 +46,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 SetupIconFile=..\src\ImageViewer\app.ico
 MinVersion=10.0
+; Makes Setup call SHChangeNotify(SHCNE_ASSOCCHANGED) after installing and uninstalling. Without
+; it the registry is correct but Explorer keeps serving its cached association data, so the
+; application does not appear under "Open with" until the user signs out and back in.
+ChangesAssociations=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -139,3 +143,74 @@ Root: HKA; Subkey: "Software\Classes\.qoi\OpenWithProgids";   ValueType: string;
 [UninstallDelete]
 ; Settings are written under the user's roaming profile and are not tracked by the installer.
 Type: filesandordirs; Name: "{userappdata}\ImageViewer"
+
+[Code]
+{
+  Registers SupportedTypes for the application.
+
+  OpenWithProgids alone gets an application into the "Choose another app" dialog, but the shell
+  also consults Applications\<exe>\SupportedTypes when building the Open With list. Without it the
+  application was registered for all 55 extensions and still did not appear as an option, which is
+  exactly the bug this exists to fix.
+
+  Written in code rather than as 55 more [Registry] lines so the extension list is stated once.
+}
+
+const
+  SupportedExtensions =
+    '.jpg .jpeg .jpe .jfif .jif .png .gif .bmp .dib .tif .tiff .ico .cur .wdp .jxr .hdp .dds ' +
+    '.heic .heif .hif .avif .avifs .webp .jxl ' +
+    '.cr2 .cr3 .crw .nef .nrw .arw .srf .sr2 .orf .rw2 .raf .pef .ptx .srw .dng .3fr .fff .iiq ' +
+    '.rwl .x3f .mrw .erf .kdc .dcr ' +
+    '.svg .svgz .psd .tga .jp2 .exr .qoi';
+
+procedure RegisterSupportedTypes();
+var
+  RootKey: Integer;
+  KeyPath, Remaining, Extension: String;
+  SpaceAt: Integer;
+begin
+  { Match the root the rest of the installer used, so a per-user install stays per-user. }
+  if IsAdminInstallMode then
+    RootKey := HKEY_LOCAL_MACHINE
+  else
+    RootKey := HKEY_CURRENT_USER;
+
+  KeyPath := 'Software\Classes\Applications\ImageViewer.exe\SupportedTypes';
+
+  { Split on spaces by hand rather than with StringSplitEx, which only exists in Inno Setup 6.3
+    and later. This works on any 6.x compiler. }
+  Remaining := Trim(SupportedExtensions) + ' ';
+
+  repeat
+    SpaceAt := Pos(' ', Remaining);
+    Extension := Trim(Copy(Remaining, 1, SpaceAt - 1));
+    Remaining := Trim(Copy(Remaining, SpaceAt + 1, Length(Remaining))) + ' ';
+
+    if Extension <> '' then
+      RegWriteStringValue(RootKey, KeyPath, Extension, '');
+  until Trim(Remaining) = '';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  { Only once the files are in place, and only if the user opted into associations. }
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('associate') then
+    RegisterSupportedTypes();
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  RootKey: Integer;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if IsAdminInstallMode then
+      RootKey := HKEY_LOCAL_MACHINE
+    else
+      RootKey := HKEY_CURRENT_USER;
+
+    { [Registry] cleans up what it wrote; this key was created in code so it must be removed here. }
+    RegDeleteKeyIncludingSubkeys(RootKey, 'Software\Classes\Applications\ImageViewer.exe');
+  end;
+end;

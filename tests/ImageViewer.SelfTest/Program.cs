@@ -516,6 +516,42 @@ public static class Program
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase),
             "the .iss appears to set a default handler for an extension");
 
+        // Without ChangesAssociations, Setup never calls SHChangeNotify, so Explorer keeps serving
+        // cached association data and the app does not appear under "Open with" until sign-out.
+        // Observed for real: 55 correct registry entries and still invisible in the menu.
+        Check("installer declares ChangesAssociations so the shell is notified",
+            System.Text.RegularExpressions.Regex.IsMatch(
+                text, @"^\s*ChangesAssociations\s*=\s*yes",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                System.Text.RegularExpressions.RegexOptions.Multiline),
+            "Setup will not refresh Explorer's association cache");
+
+        // SupportedTypes is the other half: the shell consults it when building the Open With list.
+        Check("installer registers SupportedTypes for the application",
+            text.Contains("SupportedTypes", StringComparison.Ordinal),
+            "the app will not be offered in the Open With menu");
+
+        // The code-generated SupportedTypes list must cover the same extensions as [Registry].
+        var supportedBlock = System.Text.RegularExpressions.Regex.Match(
+            text, @"SupportedExtensions\s*=(.*?);", System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        if (supportedBlock.Success)
+        {
+            var codeExtensions = System.Text.RegularExpressions.Regex
+                .Matches(supportedBlock.Value, @"\.[a-z0-9]+")
+                .Select(m => m.Value.ToLowerInvariant())
+                .ToHashSet();
+
+            var missingFromCode = expected.Except(codeExtensions).Order().ToArray();
+            Check("the SupportedTypes list covers every associatable extension",
+                missingFromCode.Length == 0,
+                missingFromCode.Length > 0 ? $"missing: {string.Join(", ", missingFromCode)}" : null);
+        }
+        else
+        {
+            Check("the SupportedTypes extension list could be parsed", false, "SupportedExtensions not found");
+        }
+
         Check("installer references the generated icon",
             text.Contains("app.ico", StringComparison.OrdinalIgnoreCase));
 
