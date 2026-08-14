@@ -61,6 +61,15 @@ jobs:
           Set-Content $csproj $text -NoNewline
           Select-String -Path $csproj -Pattern '<Version>'
 
+          # The .iss carries its own AppVersion, which drives both the installer's displayed
+          # version and its output filename. Stamping only the csproj shipped v0.1.1 as an asset
+          # named ImageViewer-0.1.0-setup.exe that reported 0.1.0 in Add/Remove Programs.
+          $iss = 'packaging/ImageViewer.iss'
+          $issText = Get-Content $iss -Raw
+          $issText = $issText -replace '(#define\s+AppVersion\s+)"[^"]*"', "`${1}`"${{ steps.version.outputs.version }}`""
+          Set-Content $iss $issText -NoNewline
+          Select-String -Path $iss -Pattern '#define\s+AppVersion'
+
       - name: Run the self-test
         shell: pwsh
         run: |
