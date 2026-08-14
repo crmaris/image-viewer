@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.Win32;
 
 namespace ImageViewer.Update;
 
@@ -251,19 +252,125 @@ public sealed class AppUpdateService
     }
 
     /// <summary>
+    /// How the running copy was installed, which the update has to match.
+    /// </summary>
+    public enum InstallMode
+    {
+        /// <summary>No installer record found - a portable copy. Let Setup ask.</summary>
+        Unknown,
+
+        /// <summary>Installed for this user only, under the user's profile.</summary>
+        CurrentUser,
+
+        /// <summary>Installed for all users, normally under Program Files.</summary>
+        AllUsers,
+    }
+
+    /// <summary>Inno Setup's uninstall key for this application's AppId.</summary>
+    private const string UninstallKey =
+        @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{7C3F1A62-9E4D-4B8A-9F21-2D6B5E0C4A17}_is1";
+
+    /// <summary>
+    /// Works out whether the running copy was installed for all users or just this one.
+    /// </summary>
+    /// <remarks>
+    /// Read from the registry rather than guessed from the executable's path. The path is only a
+    /// hint - this application was, at one point, installed into a folder that did not match its
+    /// registration at all - whereas the uninstall key records what Setup actually did, and which
+    /// hive it is in is precisely the answer needed.
+    /// </remarks>
+    public static InstallMode DetectInstallMode()
+    {
+        try
+        {
+            using (var machine = Registry.LocalMachine.OpenSubKey(UninstallKey))
+            {
+                if (machine is not null) return InstallMode.AllUsers;
+            }
+
+            using (var user = Registry.CurrentUser.OpenSubKey(UninstallKey))
+            {
+                if (user is not null) return InstallMode.CurrentUser;
+            }
+        }
+        catch
+        {
+            // An unreadable hive is no reason to refuse the update; Setup can ask instead.
+        }
+
+        return InstallMode.Unknown;
+    }
+
+    /// <summary>
+    /// Builds the command line handed to the downloaded installer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Getting this wrong does not fail loudly - it installs a <em>second</em> copy alongside the
+    /// first. Setup is marked <c>PrivilegesRequired=lowest</c>, so left to itself it offers a
+    /// choice, and an all-users installation updated by a per-user run lands in
+    /// <c>%LOCALAPPDATA%</c> while the original stays in Program Files, still registered, still
+    /// launched by every file association. Pinning the mode to the one already in use is what
+    /// prevents that.
+    /// </para>
+    /// <para>
+    /// No <c>/DIR</c> is passed. Setup recognises its own AppId and reuses the recorded install
+    /// path automatically, so supplying the directory adds nothing but a quoting hazard - a path
+    /// containing a space that reaches Setup unquoted installs silently into the wrong folder and
+    /// still reports success, which has happened here once already.
+    /// </para>
+    /// <para>
+    /// Returned as a list rather than a joined string so the runtime does the quoting.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> BuildInstallerArguments(InstallMode mode) => mode switch
+    {
+        InstallMode.AllUsers => ["/ALLUSERS"],
+        InstallMode.CurrentUser => ["/CURRENTUSER"],
+        _ => [],
+    };
+
+    /// <summary>
     /// Launches the downloaded installer and asks the application to exit.
     /// </summary>
     /// <remarks>
     /// The installer cannot replace files the running viewer holds open, so the caller must shut
-    /// down immediately after this returns.
+    /// down immediately after this returns. Failure to start is raised rather than swallowed: the
+    /// caller has already told the user the update is being applied, so silently doing nothing
+    /// would be the worst possible outcome. Declining the elevation prompt lands here too, which is
+    /// why the message distinguishes it.
     /// </remarks>
-    public static void LaunchInstaller(string installerPath)
+    /// <returns>The started process, or null if the shell handed the file to a running instance.</returns>
+    public static Process? LaunchInstaller(string installerPath) =>
+        LaunchInstaller(installerPath, DetectInstallMode());
+
+    /// <inheritdoc cref="LaunchInstaller(string)"/>
+    public static Process? LaunchInstaller(string installerPath, InstallMode mode)
     {
-        Process.Start(new ProcessStartInfo
+        if (!File.Exists(installerPath))
+            throw new FileNotFoundException("The downloaded installer is no longer there.", installerPath);
+
+        var start = new ProcessStartInfo
         {
             FileName = installerPath,
+            // Required for the installer's own elevation prompt to appear at all.
             UseShellExecute = true,
-        });
+        };
+
+        foreach (var argument in BuildInstallerArguments(mode))
+            start.ArgumentList.Add(argument);
+
+        try
+        {
+            return Process.Start(start);
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            // ERROR_CANCELLED: the user dismissed the UAC prompt. Not a fault, but the caller must
+            // know the installer is not running so it does not close the window underneath them.
+            throw new OperationCanceledException(
+                "The update was cancelled at the Windows permission prompt.", ex);
+        }
     }
 
     /// <summary>Opens the release page in the default browser.</summary>

@@ -146,7 +146,11 @@ public static class WicDecoder
 
         ct.ThrowIfCancellationRequested();
 
-        BitmapSource result = ApplyOrientation(bmp, orientation);
+        // Palette is non-null for exactly the indexed formats, which is the one case WIC leaves
+        // un-colour-managed. Costs a reference comparison on every other image.
+        BitmapSource decoded = bmp.Palette is not null ? ConvertIndexedToSrgb(bmp, bytes) : bmp;
+
+        BitmapSource result = ApplyOrientation(decoded, orientation);
         result.Freeze();
 
         return new DecodedImage
@@ -160,6 +164,66 @@ public static class WicDecoder
             IsPreview = false,
             AppliedExifOrientation = orientation,
         };
+    }
+
+    /// <summary>
+    /// Converts a palettised frame that carries an ICC profile into sRGB.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Read this before "adding colour management" anywhere else. Measured on 2026-08-14: WIC
+    /// <em>already</em> applies an embedded profile by itself whenever it decodes a frame into a
+    /// straight RGB format. An AdobeRGB JPEG storing (100,181,89) arrives here as (0,183,81) -
+    /// converted, correct, with no help from us. Wrapping the common path in a transform would
+    /// convert it a second time, to (0,185,71): a visible oversaturation on every photograph. The
+    /// RGB path is therefore deliberately left completely alone.
+    /// </para>
+    /// <para>
+    /// The gap is a frame WIC keeps in its native palettised format. No format conversion happens,
+    /// so no colour transform happens either, and the same AdobeRGB values arrive untouched at
+    /// (100,180,90) - rendered as if they were sRGB, which is wrong. Converting only these brings
+    /// them to (0,182,82), matching what the RGB path produces for identical colours.
+    /// </para>
+    /// <para>
+    /// A frame already tagged sRGB is measured to come through unchanged, so no attempt is made to
+    /// recognise and skip sRGB profiles: it would be cost on a rare path to avoid a no-op.
+    /// </para>
+    /// <para>
+    /// Note that <see cref="ColorConvertedBitmap"/> rejects an indexed source outright with
+    /// "Pixel format not supported", which is why the frame is normalised to Bgra32 first.
+    /// </para>
+    /// </remarks>
+    private static BitmapSource ConvertIndexedToSrgb(BitmapSource source, byte[] bytes)
+    {
+        try
+        {
+            // The profile lives on the frame, which a BitmapImage does not expose. Re-reading the
+            // header costs microseconds and only ever happens for a palettised image.
+            using var stream = new MemoryStream(bytes, writable: false);
+            var decoder = BitmapDecoder.Create(
+                stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+
+            if (decoder.Frames.Count == 0) return source;
+
+            // No profile means nothing to convert from - an ordinary GIF or PNG-8 lands here and
+            // must be left exactly as it is.
+            if (decoder.Frames[0].ColorContexts is not { Count: > 0 } contexts) return source;
+
+            var normalised = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+            normalised.Freeze();
+
+            var converted = new ColorConvertedBitmap(
+                normalised, contexts[0], new ColorContext(PixelFormats.Bgra32), PixelFormats.Bgra32);
+            converted.Freeze();
+
+            return converted;
+        }
+        catch
+        {
+            // A malformed or exotic profile is no reason to refuse the image. Showing it in the
+            // wrong gamut is enormously better than not showing it at all.
+            return source;
+        }
     }
 
     private static BitmapSource? SafeThumbnail(Func<BitmapSource?> get)

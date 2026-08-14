@@ -9,6 +9,7 @@ using ImageViewer.Editing;
 using ImageViewer.Files;
 using ImageViewer.Imaging;
 using ImageViewer.Navigation;
+using ImageViewer.Settings;
 using ImageViewer.Ui;
 using ImageViewer.Update;
 
@@ -40,6 +41,16 @@ public sealed class MainWindow : Window
     private readonly ViewTransform _view = new();
     private readonly ImagePipeline _pipeline = new();
     private readonly MatrixTransform _matrix = new();
+
+    /// <summary>
+    /// Preferences carried over from the previous session.
+    /// </summary>
+    /// <remarks>
+    /// Read here, on the startup path, because the window's size and position have to be known
+    /// before it is shown - restoring them afterwards would be a visible jump. It is one short text
+    /// file parsed by hand precisely so that this can be afforded; see <see cref="AppSettings"/>.
+    /// </remarks>
+    private readonly AppSettings _settings = AppSettings.Load();
 
     /// <summary>Receives embedded thumbnails; marshals to the UI thread via the captured context.</summary>
     private readonly Progress<DecodedImage> _previewSink;
@@ -115,9 +126,7 @@ public sealed class MainWindow : Window
     public MainWindow()
     {
         Title = "Image Viewer";
-        Width = 1280;
-        Height = 800;
-        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        RestorePlacement();
         Background = Brushes.Black;
         UseLayoutRounding = true;
         SnapsToDevicePixels = true;
@@ -160,6 +169,8 @@ public sealed class MainWindow : Window
         DragOver += OnDragOver;
         SizeChanged += OnSizeChanged;
         DpiChanged += (_, _) => UpdateLayoutMatrix(recomputeFit: true);
+        // Closing, not Closed: RestoreBounds is only meaningful while the window still exists.
+        Closing += (_, _) => SaveSettings();
         Closed += (_, _) => { StopAnimation(); _pipeline.Dispose(); };
         ContentRendered += OnContentRendered;
 
@@ -180,6 +191,152 @@ public sealed class MainWindow : Window
         // Only now, with the window up and the first image already decoding, is it acceptable to
         // think about anything as optional as an update check.
         ScheduleUpdateCheck();
+
+        // Queued behind the decode rather than run here: none of it is worth a dropped frame on
+        // the one path the user actually notices.
+        Dispatcher.InvokeAsync(RestoreDeferredState, DispatcherPriority.ApplicationIdle);
+    }
+
+    // --------------------------------------------------------------- settings
+
+    /// <summary>
+    /// Applies the remembered size, position and window state before the window is shown.
+    /// </summary>
+    private void RestorePlacement()
+    {
+        Width = _settings.WindowWidth;
+        Height = _settings.WindowHeight;
+        _slideshowSeconds = Math.Clamp(_settings.SlideshowSeconds, 1, 30);
+
+        if (IsPlacementReachable(_settings.WindowLeft, _settings.WindowTop, Width, Height))
+        {
+            Left = _settings.WindowLeft;
+            Top = _settings.WindowTop;
+            WindowStartupLocation = WindowStartupLocation.Manual;
+        }
+        else
+        {
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        }
+
+        // Order matters: fullscreen records the state it has to return to, so the maximised flag
+        // has to be applied first or leaving fullscreen would drop the window to a restored size
+        // it never had.
+        if (_settings.WindowMaximized) WindowState = WindowState.Maximized;
+        if (_settings.Fullscreen) ToggleFullscreen();
+    }
+
+    /// <summary>
+    /// True if a remembered position still lands somewhere the user can reach.
+    /// </summary>
+    /// <remarks>
+    /// A window saved on a monitor that has since been unplugged - or on a laptop later used
+    /// undocked - would otherwise be restored into empty space: running, focusable, and completely
+    /// invisible, with no way to drag it back. Requiring a decent patch of it to overlap the
+    /// virtual desktop, and its title bar not to sit above the top edge, keeps it grabbable however
+    /// the display arrangement changed between sessions.
+    /// </remarks>
+    private static bool IsPlacementReachable(double left, double top, double width, double height)
+    {
+        if (double.IsNaN(left) || double.IsNaN(top)) return false;
+        if (width < 320 || height < 240) return false;
+
+        var screenLeft = SystemParameters.VirtualScreenLeft;
+        var screenTop = SystemParameters.VirtualScreenTop;
+        var screenRight = screenLeft + SystemParameters.VirtualScreenWidth;
+        var screenBottom = screenTop + SystemParameters.VirtualScreenHeight;
+
+        // Roughly a window button's worth of title bar in each direction.
+        const double Grabbable = 120;
+
+        var overlapWidth = Math.Min(left + width, screenRight) - Math.Max(left, screenLeft);
+        var overlapHeight = Math.Min(top + height, screenBottom) - Math.Max(top, screenTop);
+
+        return overlapWidth >= Grabbable && overlapHeight >= Grabbable && top >= screenTop;
+    }
+
+    /// <summary>Records the current state so the next launch can pick it up.</summary>
+    private void SaveSettings()
+    {
+        // While maximised or in fullscreen, Left/Top/Width/Height describe the screen-filling
+        // rectangle rather than the size to come back to. RestoreBounds is the one that round-trips.
+        var bounds = WindowState == WindowState.Normal && !_isFullscreen
+            ? new Rect(Left, Top, Width, Height)
+            : RestoreBounds;
+
+        if (bounds is { Width: > 0, Height: > 0 } &&
+            !double.IsNaN(bounds.Left) && !double.IsInfinity(bounds.Left))
+        {
+            _settings.WindowLeft = bounds.Left;
+            _settings.WindowTop = bounds.Top;
+            _settings.WindowWidth = bounds.Width;
+            _settings.WindowHeight = bounds.Height;
+        }
+
+        _settings.WindowMaximized = _isFullscreen
+            ? _preFullscreenState == WindowState.Maximized
+            : WindowState == WindowState.Maximized;
+
+        _settings.Fullscreen = _isFullscreen;
+        _settings.SlideshowSeconds = _slideshowSeconds;
+        _settings.InfoVisible = _infoVisible;
+        _settings.FilmstripVisible = _filmstrip is { Visibility: Visibility.Visible };
+
+        _settings.Save();
+    }
+
+    /// <summary>
+    /// Reopens the panels the last session left open, and registers with the shell on first run.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not in the constructor. Building the info overlay is what first touches WPF's
+    /// text and font stack - worth about 150 ms - and the shell registration opens several dozen
+    /// registry keys. Both belong after the first frame rather than in front of it.
+    /// </remarks>
+    private void RestoreDeferredState()
+    {
+        if (_settings.InfoVisible && !_infoVisible) ToggleInfo();
+        if (_settings.FilmstripVisible) ToggleFilmstrip();
+
+        RegisterWithShellOnce();
+    }
+
+    /// <summary>
+    /// Adds the viewer to the per-user "Open with" list, once per location it is run from.
+    /// </summary>
+    /// <remarks>
+    /// This lives in the application rather than the installer because the list is per-user and an
+    /// all-users install runs elevated: an installer writing it would populate the administrator's
+    /// hive rather than the hive of whoever actually uses the viewer. Doing it here also covers the
+    /// portable build, which has no installer to do it at all.
+    /// </remarks>
+    private void RegisterWithShellOnce()
+    {
+        var executable = OpenWithRegistration.ExecutablePath();
+        if (executable is null) return;
+
+        if (string.Equals(_settings.OpenWithRegisteredFor, executable, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                OpenWithRegistration.Register(executable);
+            }
+            catch
+            {
+                // Never worth surfacing - the viewer opens files perfectly well without it.
+                return;
+            }
+
+            // Recorded back on the UI thread so the settings object keeps a single writer.
+            Dispatcher.BeginInvoke(() =>
+            {
+                _settings.OpenWithRegisteredFor = executable;
+                _settings.Save();
+            });
+        });
     }
 
     private double DpiScale => VisualTreeHelper.GetDpi(this).DpiScaleX;
@@ -995,10 +1152,21 @@ public sealed class MainWindow : Window
                 .ConfigureAwait(true);
 
             ShowToast("Starting the installer...");
+
+            // Matched to how this copy was installed, so an all-users installation cannot be
+            // "updated" into a second per-user copy sitting alongside the original.
             AppUpdateService.LaunchInstaller(installer);
 
             // The installer cannot replace files this process holds open, so it has to close now.
+            // Only after the launch has actually succeeded - closing first would leave the user
+            // with no window and no installer if the elevation prompt were declined.
             Close();
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Declining the elevation prompt is a decision, not a failure.
+            _updateInProgress = false;
+            ShowToast(ex.Message);
         }
         catch (Exception ex)
         {

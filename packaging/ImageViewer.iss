@@ -39,7 +39,14 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 ; Per-user by default so no elevation prompt appears; the user can still choose all-users.
-PrivilegesRequiredOverridesAllowed=dialog
+;
+; "commandline" is not optional decoration. Without it Inno Setup silently IGNORES /ALLUSERS and
+; /CURRENTUSER, and since PrivilegesRequired=lowest the installer then falls back to asking - or,
+; when run silently, to a per-user install. That matters most for the auto-updater, which detects
+; how this copy was installed and passes the matching switch: ignored, it would "update" an
+; all-users installation in Program Files by dropping a second copy into %LOCALAPPDATA%, leaving
+; the original in place and still owning every file association.
+PrivilegesRequiredOverridesAllowed=commandline dialog
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

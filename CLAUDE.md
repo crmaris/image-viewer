@@ -43,7 +43,7 @@ pwsh -File packaging/build-installer.ps1
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-137 checks currently pass. Inno Setup 6 is **not installed on this machine**; `build-installer.ps1`
+170 checks currently pass. Inno Setup 6 is **not installed on this machine**; `build-installer.ps1`
 detects that and tells you how to get it (`winget install JRSoftware.InnoSetup`).
 
 ---
@@ -82,6 +82,65 @@ licence for most use. 2.1.13 is the last Apache-2.0 release and covers everythin
 **Do not "upgrade" it** without a licensing decision.
 
 ---
+
+## Colour management — do NOT "add" it, it is already there
+
+**Measured 2026-08-14 through the viewer's own decode path.** The obvious change here — wrap the
+decode in a `ColorConvertedBitmap` to sRGB — is a **regression**, not a fix.
+
+WIC already applies an embedded ICC profile by itself whenever it decodes a frame into a straight
+RGB format. Numbers, for a colour inside AdobeRGB but outside sRGB:
+
+| | stored in file | reaches the app | after a further "fix" |
+|---|---|---|---|
+| AdobeRGB JPEG | (100,181,89) | **(0,183,81)** — already converted | (0,185,71) — **double-converted** |
+| AdobeRGB TIFF | (100,180,90) | **(0,182,82)** — already converted | (0,184,72) — **double-converted** |
+| sRGB JPEG | (100,181,89) | (100,181,89) — untouched | (100,181,89) — no-op |
+
+The red channel clipping to 0 is the giveaway that a real gamut conversion happened. Converting a
+second time oversaturates every photograph, which is what the third column is.
+
+**The one genuine gap is palettised frames.** When WIC keeps a frame in its native indexed format
+there is no format conversion, so there is no colour transform either, and an AdobeRGB PNG-8 arrives
+untouched at (100,180,90) and renders as though it were sRGB. `WicDecoder.ConvertIndexedToSrgb`
+fixes exactly that case and nothing else, gated on `BitmapSource.Palette is not null` so it costs a
+reference comparison on every other image. Note `ColorConvertedBitmap` **rejects an indexed source**
+("Pixel format not supported"), hence the `FormatConvertedBitmap` to Bgra32 first.
+
+Not done, deliberately: **no transform to the monitor's own ICC profile.** Everything is normalised
+to sRGB, which is right for the overwhelming majority of displays but not for a wide-gamut one —
+on such a monitor images will render slightly oversaturated, as they do in every non-managed
+application. Doing it properly needs the display profile, re-conversion when the window moves
+between monitors, and a way to keep it off the fast path; none of that is justified yet.
+
+There is deliberately **no colour-management setting**. WIC's behaviour is not ours to switch off,
+so a toggle by that name could only control the palettised correction — a name promising far more
+than it delivered.
+
+## Settings
+
+`Settings/AppSettings.cs`, stored as flat `key=value` text at `%APPDATA%\ImageViewer\settings.txt`.
+Persists window bounds, maximised/fullscreen state, slideshow interval, the info and filmstrip
+toggles, and which executable path the "Open with" registration was last written for.
+
+- **Not JSON.** `JsonSerializer`'s first call builds reflection metadata for the type — tens of
+  milliseconds, against a cold start where an empty WPF window is already most of a second. Hand
+  parsing measures **0.033 ms** per load and adds no assembly to the startup path. The self-test
+  asserts it stays under 1 ms so nobody quietly swaps a serialiser back in.
+- **Every number is written with `InvariantCulture`.** `InvariantGlobalization` is off in this
+  project (Greek filenames), so on a decimal-comma locale a culture-sensitive writer would emit
+  `7,5` and then fail to read it back. There is a check for this.
+- **`RestoreBounds`, not `Left`/`Top`/`Width`/`Height`.** While maximised or fullscreen the latter
+  describe the screen-filling rectangle, not the size to return to.
+- **A saved position is validated against the current virtual desktop.** A window remembered on a
+  monitor that has since been unplugged would otherwise restore into empty space — running,
+  focusable, and impossible to drag back.
+- Overlays are restored at `ApplicationIdle` **after** the first frame. Reopening the info panel is
+  what first touches WPF's text stack (~150 ms); that must not land back on the startup path.
+- `AppSettings.Load(path)`/`Save(path)` overloads exist so the self-test can use scratch files.
+  `Environment.GetFolderPath` asks the shell for the real roaming folder and **ignores the `APPDATA`
+  environment variable**, so redirecting it does nothing — a test written that way silently reads
+  the developer's own settings.
 
 ## Rotate and save — read before changing
 
@@ -265,6 +324,30 @@ Rules that must not be relaxed:
 
 `RepositoryOwner`/`RepositoryName` in `AppUpdateService` are the only place the repo is named.
 
+### The install-mode trap (fixed 2026-08-14)
+
+`LaunchInstaller` used to run the installer with **no arguments**. Setup is built
+`PrivilegesRequired=lowest`, so left to itself it asks whether to install per-user or for all users
+— and answering that wrong does not fail loudly, it installs a **second copy**. An all-users
+installation in `C:\Program Files` would gain a per-user duplicate in `%LOCALAPPDATA%` while the
+original stayed put, still registered, still owning every file association.
+
+It now reads Inno Setup's own uninstall key to decide (`DetectInstallMode`: present in HKLM →
+all-users, HKCU → per-user, absent → portable, let Setup ask) and passes the matching
+`/ALLUSERS` or `/CURRENTUSER`. Registry, not the executable's path — this application has already
+been installed once into a folder that did not match its registration.
+
+**That switch is inert without `PrivilegesRequiredOverridesAllowed=commandline dialog` in the
+`.iss`.** With only `dialog`, Inno silently ignores `/ALLUSERS` and `/CURRENTUSER`. The self-test
+checks the directive, because the C# side would otherwise pass all its own tests and still do
+nothing. (This also explains the earlier silent install: the `/ALLUSERS` passed by hand was almost
+certainly ignored, and the install reached HKLM because the process was already elevated.)
+
+`LaunchInstaller` now also returns the started `Process`, throws `FileNotFoundException` for a
+missing file, and converts a declined UAC prompt (`Win32Exception` 1223) into
+`OperationCanceledException` — which `MainWindow` catches separately so the window is **not** closed
+out from under a user who said no. `Close()` only happens after the launch has actually succeeded.
+
 **Releasing:** push a tag and `.github/workflows/release.yml` does the rest — it stamps the version
 into the csproj (so the shipped binary reports the same number the updater compares), runs the full
 self-test *and* the assembly-load check, builds the portable zip and the installer, and attaches
@@ -335,6 +418,31 @@ Things that cost real time to learn:
   `SHChangeNotify(SHCNE_ASSOCCHANGED)` and Explorer serves stale cached associations.
 - An **explorer.exe restart** is the reliable way to make new registrations show up.
 
+### The app registers itself now (2026-08-14)
+
+`Files/OpenWithRegistration.cs` writes the `OpenWithList` MRU on first run, from
+`MainWindow.RegisterWithShellOnce`, deferred to `ApplicationIdle` so it is never on the startup path.
+
+**It lives in the application rather than the installer on purpose.** The list is per-user, and an
+all-users install runs elevated — an installer writing `HKCU` would populate the *administrator's*
+hive, not the hive of whoever ends up using the viewer. Doing it in the app also covers the portable
+build, which has no installer at all.
+
+- **Appends to the MRU, does not promote to the front.** Being absent was the bug; jumping ahead of
+  an application the user has actually been choosing — a RAW editor for `.cr2`, say — would be
+  presumptuous. On an extension with no list yet (the common case) appending still makes the viewer
+  the first entry. Note this differs from the hand-written script used on this machine, which *did*
+  promote to front.
+- **Keyed on the executable path** (`openWithRegisteredFor` in settings), so it re-runs if the app
+  moves or is reinstalled elsewhere, but never nags if the user removes the entry.
+- **The application/ProgID keys are only written when nothing usable is already registered**
+  (`HasWorkingRegistration`, read through `HKEY_CLASSES_ROOT` so it sees both hives). This is not
+  tidiness: `HKCU\Software\Classes` **shadows** HKLM in the merged view, so writing them
+  unconditionally makes whichever copy ran last hijack every association — during development, a
+  build sitting in `bin\Debug`. Verified after this guard: launching the debug build left
+  `HKCU\...\ImageViewer.Image` absent and `.jpg` still resolving to `C:\Program Files`.
+- `UserChoice` is still never touched.
+
 Ruled out by measurement, do not re-investigate: HKLM/HKCR shadowing, `NoOpenWith` policies,
 packaged-app precedence, `%LOCALAPPDATA%` being deprioritised (VS Code lives there and appears
 fine), and unsigned-binary gating (Smart App Control is off).
@@ -352,6 +460,26 @@ $args = '/VERYSILENT /ALLUSERS /DIR="C:\Program Files\Image Viewer" /TASKS=assoc
 A stray `C:\Program` folder is worth cleaning up beyond this app: it breaks other installers that
 reference `C:\Program Files` unquoted.
 
+### When `dotnet build` hangs forever, check TEMP first
+
+Cost most of a session on 2026-08-14. Every build hung indefinitely — not slowly, *indefinitely* —
+including `dotnet new console` + `dotnet build` on a throwaway project on a different drive, so it
+was clearly machine-wide rather than this repository. `dotnet --version` answered in 201 ms, restore
+reported "all projects are up-to-date", and then nothing.
+
+**The cause was an inaccessible default `TEMP` directory.** MSBuild writes to `%TEMP%\MSBuildTemp`
+and stalls there with no diagnostic. Redirecting it makes builds complete in ~4 seconds:
+
+```powershell
+$env:TEMP = 'E:\All projects\Image Viewer\src\ImageViewer\obj\codex-temp'
+$env:TMP  = $env:TEMP
+dotnet build src/ImageViewer/ImageViewer.csproj --no-restore --disable-build-servers -m:1 -nr:false -p:UseSharedCompilation=false
+```
+
+The 28 idle `dotnet.exe ... /nodemode:1` worker processes visible at the time were a **symptom**,
+not the cause — an early reading blamed them and was wrong. Nothing needed killing. `obj/` is
+gitignored, so a temp directory under it is a safe target.
+
 ### Benchmarking caveat
 
 Startup measured 26–58 s at one point and ~1 s an hour later, on the same binaries. The machine was
@@ -361,6 +489,24 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-08-14 — the four pending items closed
+Owner asked for all four outstanding items in one go. 170 checks pass; assembly-load invariant holds.
+
+- **Colour management: measured, and the obvious fix was a regression.** WIC already converts
+  embedded ICC profiles; adding a transform would double-convert every photo. Only palettised
+  frames genuinely needed fixing. Full numbers in the section above. The measurement was delegated
+  to Codex, which also caught two bugs in the probe itself — Q16 values passed to the Q8
+  `MagickColor` API, and an "sRGB" control file that had silently lost its ICC profile, which would
+  have made the sRGB-is-a-no-op conclusion meaningless.
+- **Settings persist** (`Settings/AppSettings.cs`). Verified end to end: wrote 140,90 900×640 into
+  the file, launched, window came up at exactly 140,90 900×640.
+- **The app registers itself in the Open With flyout** on first run, with a guard that stops a
+  `bin\Debug` build hijacking the installed copy's associations.
+- **`LaunchInstaller` runs for real in the suite** (stub executable, verified pid and exit code),
+  and the install-mode trap above was found and fixed while testing it.
+- **`--probe-color` was a throwaway mode and has been removed**; its findings became permanent
+  regression checks in `tests/ImageViewer.SelfTest/FeatureChecks.cs`.
 
 ### 2026-08-14 — v0.1.1, installed, shell integration fixed
 - **Released v0.1.1** and installed it all-users to `C:\Program Files\Image Viewer`. The first
@@ -421,26 +567,21 @@ system load before trusting any startup number**, and re-measure when the machin
 
 ## Pending / not done
 
-- **The updater's final step is still untested.** Discovery, asset selection, host validation and
-  download are verified against a real release; `LaunchInstaller` — handing the file to the shell
-  and closing — has never been executed. It will fire the first time Ctrl+U is used after a release
-  newer than the installed build. Worth watching that once.
-- **The uninstaller has been run, but only silently** (`/VERYSILENT`), and only to correct a
-  mis-targeted install. The interactive uninstall path is unexercised.
-- **`OpenWithList` was written by hand on this machine, not by the installer.** That is per-user MRU
-  state, so a fresh install on another machine will put the app in *Choose another app* but not at
-  the top of the compact flyout until the user picks it once. Decide whether the app should nudge
-  that itself on first run; deliberately not done, since writing another app's MRU is intrusive.
+- **A live end-to-end update has still never run.** `LaunchInstaller` is now exercised for real by
+  the suite against a stub executable — argument construction, the shell launch and both failure
+  paths are covered — but Inno Setup's own behaviour during an actual upgrade is not, and cannot be
+  until there is a release newer than the installed build. The install-mode switch in particular
+  deserves watching the first time Ctrl+U does something real.
+- **The interactive uninstall path is unexercised.** The uninstaller has only ever been run
+  `/VERYSILENT`, to correct a mis-targeted install.
+- **The Open With registration has only been proven on this machine**, where the entries already
+  existed. The genuinely new path — a machine with no prior registration, where the app writes the
+  MRU slots itself — has not been observed. The `HasWorkingRegistration` guard is verified though:
+  a `bin\Debug` launch left the installed HKLM registration untouched.
 - **Inno Setup is not installed on this machine**, so local installer builds fail by design.
   CI builds it instead. Install locally with `winget install JRSoftware.InnoSetup` if needed.
-- **Settings are not persisted.** `_slideshowSeconds`, the info/filmstrip toggles and window size
-  reset each launch. `Settings/AppSettings.cs` was planned and never written.
-- **No colour-management pass.** WIC applies embedded profiles by default; wide-gamut behaviour is
-  unverified, which may matter for published review images.
+- **No transform to the monitor's ICC profile.** Everything normalises to sRGB. Correct for ordinary
+  displays, slightly oversaturated on a wide-gamut one. See the colour-management section.
 - **NativeAOT launcher stub** for a ~20 ms handoff: designed, deliberately not built.
-- **Settings are not persisted.** `_slideshowSeconds`, the info/filmstrip toggles and window size
-  reset each launch. `Settings/AppSettings.cs` was planned and not written.
-- **No colour-management pass.** WIC applies embedded profiles by default; wide-gamut behaviour has
-  not been checked, which may matter for published review images.
 - **HEIC/WebP/RAW rely on this machine's installed Windows codecs.** Tier 2 covers WebP on a clean
   machine; HEIC and RAW would fall through to Magick.NET, which is untested for those here.

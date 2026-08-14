@@ -69,6 +69,7 @@ public static class Program
         RunUpdateChecks();
         RunCacheChecks(dir);
         RunPipelineChecks(dir);
+        FeatureChecks.Run(Check, Section);
         RunTimings(dir);
 
         Console.WriteLine();
