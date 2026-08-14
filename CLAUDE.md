@@ -6,7 +6,7 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.1.0
+- **Version:** 0.1.1 (released; installed on this machine at `C:\Program Files\Image Viewer`)
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
@@ -305,7 +305,76 @@ The portable build is ~180 MB (80 MB zipped). It was 317 MB before two fixes, bo
 
 ---
 
+## Windows shell integration — hard-won, read before touching associations
+
+Getting an app into Windows 11's "Open with" involves **four separate mechanisms**. Having some of
+them right and the rest missing produces an app that is correctly registered and still invisible,
+which is exactly what happened here across several rounds of "fixed it" / "no it isn't".
+
+| Key | What it actually controls |
+|---|---|
+| `Classes\<ext>\OpenWithProgids` | Puts the ProgID in the **Choose another app** dialog |
+| `Classes\Applications\<exe>\SupportedTypes` | The shell reads this when building the Open With list |
+| `Software\<App>\Capabilities` + `RegisteredApplications` | Lists the app **by name in Settings → Default apps** |
+| `Explorer\FileExts\<ext>\OpenWithList` | The **compact flyout** — an ordinary per-user MRU |
+| `Explorer\FileExts\<ext>\UserChoice` | The **default handler**. Hash-protected; user only |
+
+Things that cost real time to learn:
+
+- **`SHAssocEnumHandlers` reads a different list from the compact flyout.** It returned "Image
+  Viewer, recommended" the whole time the flyout showed nothing. Verifying with it proves the
+  association layer is sound; it does *not* prove the user will see the app. To check the flyout,
+  read `FileExts\<ext>\OpenWithList`.
+- **`OpenWithList` is a plain MRU and is safe to write** — it is exactly what Windows writes when
+  you pick an app manually. Adding `ImageViewer.exe` and putting its letter first in `MRUList` puts
+  the app at the top of the flyout. It survives an Explorer restart.
+- **`UserChoice` must never be written.** It carries a validated hash; forging it makes Windows
+  discard the association entirely. `IAssocHandler::MakeDefault` returns **S_OK and does nothing**
+  on Windows 11 — measured. Setting the default is reserved to the user, permanently.
+- **`ChangesAssociations=yes` is required** in `[Setup]`, or Inno Setup never calls
+  `SHChangeNotify(SHCNE_ASSOCCHANGED)` and Explorer serves stale cached associations.
+- An **explorer.exe restart** is the reliable way to make new registrations show up.
+
+Ruled out by measurement, do not re-investigate: HKLM/HKCR shadowing, `NoOpenWith` policies,
+packaged-app precedence, `%LOCALAPPDATA%` being deprioritised (VS Code lives there and appears
+fine), and unsigned-binary gating (Smart App Control is off).
+
+### Silent-install trap
+
+`/DIR=C:\Program Files\Image Viewer` passed as an **array element** to `Start-Process` splits at the
+space and Inno Setup receives `/DIR=C:\Program` — which silently installs 183 MB into `C:\Program\`
+and returns exit code 0. Pass the whole command line as a **single quoted string**:
+
+```powershell
+$args = '/VERYSILENT /ALLUSERS /DIR="C:\Program Files\Image Viewer" /TASKS=associate'
+```
+
+A stray `C:\Program` folder is worth cleaning up beyond this app: it breaks other installers that
+reference `C:\Program Files` unquoted.
+
+### Benchmarking caveat
+
+Startup measured 26–58 s at one point and ~1 s an hour later, on the same binaries. The machine was
+running Codex, ChatGPT and a dozen agent processes at 46–60% CPU with 3.7 GB free of 31 GB. **Check
+system load before trusting any startup number**, and re-measure when the machine is quiet.
+
+---
+
 ## Session log
+
+### 2026-08-14 — v0.1.1, installed, shell integration fixed
+- **Released v0.1.1** and installed it all-users to `C:\Program Files\Image Viewer`. The first
+  install went per-user to `%LOCALAPPDATA%\Programs` without asking, which was the wrong default
+  for a machine-wide tool.
+- **Fixed Open With properly** — see the section above. `ChangesAssociations`, `SupportedTypes`,
+  Capabilities/`RegisteredApplications` in the installer; `OpenWithList` MRU written directly on
+  this machine. Double-clicking a JPEG now opens Image Viewer in ~1s, verified end to end.
+- **Fixed release versioning**: the workflow stamped only the csproj, so v0.1.1 shipped an asset
+  named `ImageViewer-0.1.0-setup.exe` reporting 0.1.0. It now stamps `ImageViewer.iss` too.
+- **Added `.github/workflows/ci.yml`**, which compiles the installer on every push. The `.iss` now
+  contains a Pascal `[Code]` section that nothing else validates.
+- A six-agent audit confirmed nothing else was wrong; its conclusions are folded into the section
+  above so the reasoning is not lost.
 
 ### 2026-08-14 — First release, updater verified live
 - **Released v0.1.0.** The workflow passed on its first run (2m19s), producing
@@ -352,14 +421,22 @@ The portable build is ~180 MB (80 MB zipped). It was 317 MB before two fixes, bo
 
 ## Pending / not done
 
-- **The installer has never actually been run.** `ImageViewer-0.1.0-setup.exe` is built and
-  published, and its association list is test-verified, but nobody has installed from it. The
-  install, the "Open with" registration and the uninstaller are all unexercised.
-- **The updater's final step is untested.** Discovery, asset selection, host validation and download
-  are verified against the real release; `LaunchInstaller` — handing the file to the shell and
-  closing — has deliberately never been executed.
+- **The updater's final step is still untested.** Discovery, asset selection, host validation and
+  download are verified against a real release; `LaunchInstaller` — handing the file to the shell
+  and closing — has never been executed. It will fire the first time Ctrl+U is used after a release
+  newer than the installed build. Worth watching that once.
+- **The uninstaller has been run, but only silently** (`/VERYSILENT`), and only to correct a
+  mis-targeted install. The interactive uninstall path is unexercised.
+- **`OpenWithList` was written by hand on this machine, not by the installer.** That is per-user MRU
+  state, so a fresh install on another machine will put the app in *Choose another app* but not at
+  the top of the compact flyout until the user picks it once. Decide whether the app should nudge
+  that itself on first run; deliberately not done, since writing another app's MRU is intrusive.
 - **Inno Setup is not installed on this machine**, so local installer builds fail by design.
   CI builds it instead. Install locally with `winget install JRSoftware.InnoSetup` if needed.
+- **Settings are not persisted.** `_slideshowSeconds`, the info/filmstrip toggles and window size
+  reset each launch. `Settings/AppSettings.cs` was planned and never written.
+- **No colour-management pass.** WIC applies embedded profiles by default; wide-gamut behaviour is
+  unverified, which may matter for published review images.
 - **NativeAOT launcher stub** for a ~20 ms handoff: designed, deliberately not built.
 - **Settings are not persisted.** `_slideshowSeconds`, the info/filmstrip toggles and window size
   reset each launch. `Settings/AppSettings.cs` was planned and not written.
