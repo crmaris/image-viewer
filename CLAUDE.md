@@ -6,7 +6,8 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.1.1 (released; installed on this machine at `C:\Program Files\Image Viewer`)
+- **Version:** 0.2.0 (released and installed all-users at `C:\Program Files\Image Viewer`,
+  with the CLI on the machine PATH)
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
@@ -565,6 +566,33 @@ system load before trusting any startup number**, and re-measure when the machin
 
 ## Session log
 
+### 2026-08-21 — v0.2.0 released and installed; Open With finally observed
+Cut v0.2.0, installed it over the v0.1.1 all-users install, and closed three more pending items.
+
+- **The version-stamping fix is proven.** v0.1.1 shipped an asset named `ImageViewer-0.1.0-setup.exe`
+  whose Add/Remove entry read 0.1.0 while the binary reported 0.1.1. v0.2.0 ships
+  `ImageViewer-0.2.0-setup.exe`, and Add/Remove and the binary now agree at 0.2.0.
+- **The live updater was verified against the real release**: `--check-update --download` found
+  v0.2.0, passed the host allow-list, and downloaded 61,308,793 bytes matching the declared size,
+  confirmed to be a real PE rather than an error page.
+- **The Open With first-run registration has now been observed**, which had never happened before.
+  With the viewer closed and the entries cleared: `.qoi` had no list at all and the app took slot
+  `a` as the only entry; `.tga` already held three ACDSee/other entries and the app took the first
+  free letter `d` and **appended** it, `acb` becoming `acbd`, leaving the existing order untouched.
+  That is the documented intent, and it differs from the old hand-written script, which produced
+  `dacb` — the viewer jumping to the front of somebody else's list.
+- **The PATH task works on the machine hive too.** HKLM PATH went from 1284 to 1314 characters,
+  exactly the 29-character folder plus one separator, type preserved, original prefix intact.
+  `imageviewer` resolves to `C:\Program Files\Image Viewer\ImageViewer.exe` from a fresh shell.
+- No duplicate install: no HKCU uninstall key, nothing under `%LOCALAPPDATA%\Programs`, and `.jpg`
+  still resolves to the Program Files copy. The `HasWorkingRegistration` guard held — no HKCU
+  ProgID shadow was written.
+
+**The install-mode switch is still unproven, and this upgrade could not prove it.** The fix lives in
+the v0.2.0 *client*, so it governs 0.2.0 onward; v0.1.1's updater passes no arguments. This upgrade
+was therefore installed directly with `/ALLUSERS` rather than routed through Ctrl+U, which would
+have shown the "all users / just me" dialog — the exact fork the fix exists to prevent.
+
 ### 2026-08-21 — closing out the pending list
 Verified locally what had only ever been compiled in CI.
 
@@ -680,19 +708,16 @@ Owner asked for all four outstanding items in one go. 170 checks pass; assembly-
 
 ## Pending / not done
 
-- **A live end-to-end update has still never run.** The installed copy is v0.1.1 and there is no
-  newer release, so Ctrl+U has nothing to find. `LaunchInstaller` and its argument construction are
-  covered by the suite against a stub, but Inno Setup's behaviour during a real upgrade - the
-  install-mode switch in particular - is only provable by cutting a release and taking the update.
-- **The interactive uninstall wizard is unexercised.** Its `[Code]` path, including the PATH
-  removal, has now been run for real; only the clicking has not.
-- **The Open With registration's first-run path has still not been observed.** Attempted and
-  abandoned this session because a test launch hands off to any running instance rather than
-  registering. Needs either a machine with no prior registration, or a moment when the viewer is
-  definitely closed.
+- **The install-mode switch has still never run for real.** It ships in the v0.2.0 client, so the
+  first release *after* 0.2.0 is the first chance to see Ctrl+U pass `/ALLUSERS` and land back in
+  Program Files rather than forking a per-user copy. Worth watching once, deliberately.
+- **The interactive uninstall wizard is unexercised.** Its `[Code]` path, PATH removal included, has
+  been run for real; only the clicking has not.
 - **No transform to the monitor's ICC profile.** Everything normalises to sRGB. Correct for ordinary
-  displays, slightly oversaturated on a wide-gamut one. See the colour-management section.
+  displays, slightly oversaturated on a wide-gamut one. See the colour-management section. Offered
+  and declined 2026-08-21.
 - **NativeAOT launcher stub** for a ~20 ms handoff: designed, deliberately not built. It would add a
-  second executable and deployment complexity for a saving nobody has asked for.
+  second executable to the installer and the release pipeline for a saving nobody has asked for.
+  Offered and declined 2026-08-21.
 - **HEIC is still untested here.** WebP and RAW are confirmed handled by WIC on this machine; no
-  HEIC sample was available to try, and Magick.NET cannot write one without a libheif delegate.
+  HEIC sample was available, and Magick.NET cannot write one without a libheif delegate.
