@@ -23,6 +23,7 @@ internal static class FeatureChecks
 {
     internal delegate void CheckFn(string description, bool condition, string? detail = null);
 
+
     public static void Run(CheckFn check, Action<string> section)
     {
         RunSettingsChecks(check, section);

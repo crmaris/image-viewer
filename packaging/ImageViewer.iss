@@ -57,6 +57,9 @@ MinVersion=10.0
 ; it the registry is correct but Explorer keeps serving its cached association data, so the
 ; application does not appear under "Open with" until the user signs out and back in.
 ChangesAssociations=yes
+; Broadcasts WM_SETTINGCHANGE after the PATH task runs, so a newly opened console
+; picks the change up without a sign-out.
+ChangesEnvironment=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -64,6 +67,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 Name: "associate";   Description: "Add Image Viewer to the ""Open with"" list for image files"; GroupDescription: "File types:"
+Name: "addtopath";  Description: "Add to PATH, so ""imageviewer"" works from a command prompt"; GroupDescription: "Command line:"; Flags: unchecked
 
 [Files]
 ; The whole published folder. Not a single-file build on purpose: bundling native libraries makes
@@ -146,6 +150,15 @@ Root: HKA; Subkey: "Software\Classes\.tga\OpenWithProgids";   ValueType: string;
 Root: HKA; Subkey: "Software\Classes\.jp2\OpenWithProgids";   ValueType: string; ValueName: "{#ProgId}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\.exr\OpenWithProgids";   ValueType: string; ValueName: "{#ProgId}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associate
 Root: HKA; Subkey: "Software\Classes\.qoi\OpenWithProgids";   ValueType: string; ValueName: "{#ProgId}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: associate
+
+; ---- PATH, for the command-line interface ------------------------------------------------------
+; {olddata} splices in the existing value WITHOUT expanding it, and preservestringtype keeps the
+; REG_EXPAND_SZ type. Reading PATH into a variable and writing it back would expand %SystemRoot%
+; and its friends into literal paths, silently changing the meaning of the user's environment -
+; which is why this is declarative rather than code. Note the deliberate absence of
+; uninsdeletevalue: that would delete the whole of PATH on uninstall. Removal is done in [Code].
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Flags: preservestringtype; Tasks: addtopath; Check: IsAdminInstallMode and NeedsAddPath()
+Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Flags: preservestringtype; Tasks: addtopath; Check: (not IsAdminInstallMode) and NeedsAddPath()
 
 [UninstallDelete]
 ; Settings are written under the user's roaming profile and are not tracked by the installer.
@@ -235,6 +248,66 @@ begin
     '{#AppName}', 'Software\ImageViewer\Capabilities');
 end;
 
+{ Which environment key holds PATH depends on the install mode: the machine-wide one lives under
+  Session Manager, while the per-user one is simply HKCU\Environment. }
+function EnvironmentKey(): String;
+begin
+  if IsAdminInstallMode then
+    Result := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+  else
+    Result := 'Environment';
+end;
+
+{ True when PATH does not already list the install folder. A semicolon is added at both ends before
+  searching, so a folder cannot match a longer one that merely begins with the same characters. }
+function NeedsAddPath(): Boolean;
+var
+  Existing: String;
+begin
+  if not RegQueryStringValue(GetRegistrationRoot(), EnvironmentKey(), 'Path', Existing) then
+    Existing := '';
+
+  Result := Pos(
+    ';' + Uppercase(ExpandConstant('{app}')) + ';',
+    ';' + Uppercase(Existing) + ';') = 0;
+end;
+
+{ Takes the install folder back out of PATH on uninstall.
+
+  Refuses to touch a PATH that still holds an unexpanded variable. RegQueryStringValue hands back an
+  already-expanded string for a REG_EXPAND_SZ value, so writing it back would bake %SystemRoot% and
+  anything like it into literal paths - considerably worse than leaving one stale entry behind. }
+procedure RemoveFromPath();
+var
+  RootKey: Integer;
+  Key, Existing, Folder, Updated: String;
+  Position: Integer;
+begin
+  RootKey := GetRegistrationRoot();
+  Key := EnvironmentKey();
+
+  if not RegQueryStringValue(RootKey, Key, 'Path', Existing) then exit;
+  if Pos('%', Existing) > 0 then exit;
+
+  Folder := ExpandConstant('{app}');
+
+  Position := Pos(';' + Uppercase(Folder) + ';', ';' + Uppercase(Existing) + ';');
+  if Position = 0 then exit;
+
+  { Position indexes the semicolon-padded copy, which is offset by one from the original; that
+    offset is exactly cancelled by wanting to drop the separator along with the folder. }
+  Updated := Copy(Existing, 1, Position - 1) +
+             Copy(Existing, Position + Length(Folder) + 1, Length(Existing));
+
+  { Tidy any leading or trailing separator the removal left behind. }
+  while (Length(Updated) > 0) and (Updated[1] = ';') do
+    Updated := Copy(Updated, 2, Length(Updated));
+  while (Length(Updated) > 0) and (Updated[Length(Updated)] = ';') do
+    Updated := Copy(Updated, 1, Length(Updated) - 1);
+
+  RegWriteExpandStringValue(RootKey, Key, 'Path', Updated);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   { Only once the files are in place, and only if the user opted into associations. }
@@ -258,5 +331,7 @@ begin
     RegDeleteKeyIncludingSubkeys(RootKey, 'Software\Classes\Applications\ImageViewer.exe');
     RegDeleteKeyIncludingSubkeys(RootKey, 'Software\ImageViewer');
     RegDeleteValue(RootKey, 'Software\RegisteredApplications', '{#AppName}');
+
+    RemoveFromPath();
   end;
 end;

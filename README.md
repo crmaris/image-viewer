@@ -49,6 +49,50 @@ Format is detected from the file's **bytes**, not its extension — a PNG named 
 
 The wheel navigates rather than zooms; zoom is on Ctrl+wheel.
 
+## Command line
+
+The same executable is a command-line tool. Tick **Add to PATH** during installation and
+`imageviewer` works from any shell; otherwise call it by its full path.
+
+```
+imageviewer info <file>...              dimensions, format, decoder and EXIF
+imageviewer identify <file>...          detect the real format from the file's bytes
+imageviewer list <folder>               list images in viewing order
+imageviewer formats                     every readable and writable format
+imageviewer convert <in> <out>          convert between formats
+imageviewer resize <in> <out> --width N resize, preserving aspect ratio
+imageviewer thumb <in> <out> --size N   write a thumbnail
+imageviewer rotate <file> --cw          rotate in place, losslessly for JPEG
+imageviewer flip <file> --horizontal    mirror in place, losslessly for JPEG
+```
+
+Every command takes several inputs, expands wildcards and folders itself, and writes batches with
+`--out-dir`. `imageviewer help <command>` prints the options for one. Exit codes are `0` for
+success, `1` for a failure and `2` for bad usage.
+
+```bash
+imageviewer resize photos --out-dir web --width 1600 --quality 85
+```
+
+```bash
+imageviewer identify photos --mismatched-only
+```
+
+```bash
+imageviewer rotate *.jpg --cw
+```
+
+`rotate` and `flip` go through the same EXIF writer as **Ctrl+S** in the window, so repeating them
+on a JPEG never re-compresses it. `resize` and `thumb` scale during decoding, so a 24 MP photograph
+is never fully decoded just to be thrown away, and `--embedded` pulls the camera's own preview when
+one is present.
+
+The viewer also takes launch options: `--fullscreen`, and `--slideshow[=SECONDS]`.
+
+Because the executable is a Windows GUI application, a shell does not wait for it — the prompt comes
+back before the output prints. Redirecting to a file or a pipe behaves normally, which is the case
+that matters for scripting.
+
 ## Speed
 
 Measured on a Ryzen workstation, Windows 11:

@@ -70,6 +70,7 @@ public static class Program
         RunCacheChecks(dir);
         RunPipelineChecks(dir);
         FeatureChecks.Run(Check, Section);
+        CliChecks.Run(Check, Section);
         RunTimings(dir);
 
         Console.WriteLine();

@@ -34,6 +34,15 @@
   </PropertyGroup>
 
   <!--
+    The self-test drives the command-line parser directly. Those types are internal because nothing
+    outside this assembly has any business calling them at runtime, and widening them to public just
+    to be testable would put the CLI's shape into the application's surface area for good.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="ImageViewer.SelfTest" />
+  </ItemGroup>
+
+  <!--
     Fallback decoder tiers. Pinned rather than floating so a build is reproducible.
 
     None of these is on the hot path: WIC (built into Windows, no package needed) handles the

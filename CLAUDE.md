@@ -43,7 +43,7 @@ pwsh -File packaging/build-installer.ps1
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-170 checks currently pass. Inno Setup 6 is **not installed on this machine**; `build-installer.ps1`
+218 checks currently pass. Inno Setup 6 is **not installed on this machine**; `build-installer.ps1`
 detects that and tells you how to get it (`winget install JRSoftware.InnoSetup`).
 
 ---
@@ -116,6 +116,55 @@ between monitors, and a way to keep it off the fast path; none of that is justif
 There is deliberately **no colour-management setting**. WIC's behaviour is not ours to switch off,
 so a toggle by that name could only control the palettised correction — a name promising far more
 than it delivered.
+
+## Command line
+
+`Cli/` holds a full command-line interface over the same engine the window uses: `info`, `identify`,
+`list`, `formats`, `convert`, `resize`, `thumb`, `rotate`, `flip`, `version`, `help`. Exit codes are
+0 / 1 / 2 for success / failure / bad usage.
+
+- **The commands are a second face on the existing engine, not a parallel implementation.**
+  `rotate` and `flip` call `ImageSaver`, so a JPEG rotated from a script is exactly as lossless as
+  one rotated with Ctrl+S. `list` calls `FolderScanner`, so the printed order is the order Space
+  walks. `info` calls `DecoderChain` and reports which tier answered.
+- **`ConsoleHost.Prepare` is what makes any of it visible.** This is a `WinExe`, which is why no
+  console flashes when an image is double-clicked, and it therefore starts with no console at all:
+  `Console.WriteLine` goes nowhere. It attaches to the parent process's console and then **rebinds
+  `Console.Out`** — .NET caches the first resolution, which in a windowed process is a null writer,
+  so attaching without rebinding still prints nothing.
+- **A shell does not wait for a `WinExe`,** so the prompt returns before the output appears.
+  Cosmetic interactively, invisible when redirected. Fixing it properly needs a second, console-
+  subsystem executable; not worth a second binary in the installer.
+- **`CommandLine.IsCommand` runs before `SingleInstance.TryHandOff`.** A command must execute in
+  *this* process and print to the console that invoked it. Handing it to an already-open window
+  would produce no output and a meaningless exit code.
+- **A bare word that is not a verb and is not on disk is treated as a mistyped command**, not a
+  file. Otherwise `imageviewer conver a.jpg b.png` opens a window saying "conver" was not found —
+  useless interactively and silent from a script. The cheap tests come first so a real launch, whose
+  path contains a colon, never pays for a disk probe.
+- **`--` forces everything after it to be a path**, for a file genuinely called `info`.
+- `Arguments` binds `--flag value` in a second pass, because only the list of value-taking flags can
+  tell that pattern from a boolean flag followed by a file name. Getting this wrong silently eats
+  the first file after every boolean flag.
+- **Unknown options are rejected rather than ignored.** A mistyped `--quality` would otherwise write
+  a whole batch at the default and give no hint it had happened.
+- `ImageWriter` uses WPF's encoders for the common targets and Magick.NET for anything else, behind
+  `NoInlining` for the same reason the decoder tiers do. Alpha is composited onto white for JPEG and
+  GIF, which cannot carry it.
+- `InternalsVisibleTo` in the csproj lets the self-test drive the parser directly.
+
+### PATH, and the flag that would delete it
+
+The installer offers an **unchecked** `addtopath` task. It is written declaratively with `{olddata}`
+and `preservestringtype` rather than read-modify-write, because Inno's `RegQueryStringValue` returns
+a REG_EXPAND_SZ value already expanded — writing it back would bake `%SystemRoot%` into a literal
+path and quietly change what the environment means.
+
+**Never put `uninsdeletevalue` on a PATH entry.** It does not remove what was added; it deletes the
+entire `Path` value on uninstall. Removal is done in `RemoveFromPath`, which strips only the exact
+segment and **refuses to act at all if the value still contains a `%`** — leaving one stale entry is
+much better than destroying the indirection. The self-test asserts all of this, because Inno Setup
+is not installed here and CI only compiles the script rather than running it.
 
 ## Settings
 
@@ -489,6 +538,21 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-08-14 — full command-line interface
+Added `Cli/` (11 commands), `LaunchOptions` for `--fullscreen` / `--slideshow`, and an installer
+task that puts the folder on PATH. 218 checks pass; the assembly-load invariant still holds and
+cold start is unchanged at ~1.05-1.18 s.
+
+- The section above records the traps: the console attach, the handoff ordering, the mistyped-verb
+  rule, and the `uninsdeletevalue` flag that would delete the user's entire PATH.
+- Verified end to end against the built executable: a full turn of `rotate --cw` grew `sample.jpg`
+  by exactly the documented 36-byte EXIF header and then left it byte-identical, and two
+  `flip --horizontal` runs returned it to the same hash.
+- `thumb --embedded` originally returned the camera's preview at whatever size it was stored,
+  ignoring `--size`. It now fits the requested box.
+- Not tested here: the PATH task itself. Inno Setup is not installed on this machine, so CI compiles
+  the script but nothing runs it. Watch the first real install that ticks the box.
 
 ### 2026-08-14 — the four pending items closed
 Owner asked for all four outstanding items in one go. 170 checks pass; assembly-load invariant holds.

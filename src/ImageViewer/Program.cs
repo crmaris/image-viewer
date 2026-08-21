@@ -1,3 +1,5 @@
+using ImageViewer.Cli;
+
 namespace ImageViewer;
 
 /// <summary>
@@ -16,35 +18,20 @@ public static class Program
         StartupTrace.Begin();
         StartupTrace.Mark("main");
 
-        var paths = ParsePaths(args);
+        // Ahead of everything, and ahead of the single-instance handoff in particular. A command
+        // has to run in *this* process and print to the console that invoked it; handing it to a
+        // window that happens to already be open would produce no output and no exit code worth
+        // reading. The check is a few string comparisons, so a normal launch pays nothing for it.
+        if (CommandLine.IsCommand(args)) return CommandLine.Run(args);
 
-        if (SingleInstance.TryHandOff(paths))
+        var options = LaunchOptions.Parse(args);
+
+        if (SingleInstance.TryHandOff(options.Paths))
             return 0;
 
         StartupTrace.Mark("solo");
 
-        var app = new App(paths);
+        var app = new App(options);
         return app.Run();
-    }
-
-    /// <summary>
-    /// Pulls file and folder arguments out of the command line, ignoring switches.
-    /// </summary>
-    private static string[] ParsePaths(string[] args)
-    {
-        if (args.Length == 0) return [];
-
-        List<string> paths = new(args.Length);
-
-        foreach (var arg in args)
-        {
-            if (string.IsNullOrWhiteSpace(arg)) continue;
-            if (arg.StartsWith('-') || arg.StartsWith('/') && arg.Length <= 3) continue;
-
-            // Explorer passes paths already unquoted, but a hand-typed command line may not.
-            paths.Add(arg.Trim('"'));
-        }
-
-        return [.. paths];
     }
 }

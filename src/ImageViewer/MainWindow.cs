@@ -119,6 +119,17 @@ public sealed class MainWindow : Window
     /// <summary>Seconds between slideshow advances.</summary>
     private double _slideshowSeconds = 4;
 
+    /// <summary>
+    /// True when the command line asked for a slideshow that cannot start yet.
+    /// </summary>
+    /// <remarks>
+    /// A slideshow needs more than one file, and the folder is scanned after the first image is
+    /// already on screen - that ordering is what stops opening one photo out of a huge directory
+    /// waiting on the directory listing. So the request is remembered and honoured once the scan
+    /// lands.
+    /// </remarks>
+    private bool _slideshowRequested;
+
     /// <summary>Set once a background check has found a newer release; null otherwise.</summary>
     private UpdateInfo? _availableUpdate;
     private bool _updateInProgress;
@@ -195,6 +206,36 @@ public sealed class MainWindow : Window
         // Queued behind the decode rather than run here: none of it is worth a dropped frame on
         // the one path the user actually notices.
         Dispatcher.InvokeAsync(RestoreDeferredState, DispatcherPriority.ApplicationIdle);
+    }
+
+    // ----------------------------------------------------------- launch options
+
+    /// <summary>
+    /// Applies what the command line asked for, before the window is shown.
+    /// </summary>
+    /// <remarks>
+    /// Command-line options deliberately win over the remembered session: someone who types
+    /// <c>--fullscreen</c> means this launch, whatever the last one happened to leave behind. The
+    /// guard matters because the settings may already have put the window into full screen, and
+    /// toggling twice would take it straight back out.
+    /// </remarks>
+    public void ApplyLaunchOptions(LaunchOptions options)
+    {
+        if (options.Fullscreen && !_isFullscreen) ToggleFullscreen();
+
+        if (options.SlideshowSeconds > 0)
+            _slideshowSeconds = Math.Clamp(options.SlideshowSeconds, 1, 30);
+
+        _slideshowRequested = options.Slideshow;
+    }
+
+    /// <summary>Starts a slideshow the command line asked for, once there is something to show.</summary>
+    private void StartRequestedSlideshow()
+    {
+        if (!_slideshowRequested || _files.Length < 2 || _slideshow is not null) return;
+
+        _slideshowRequested = false;
+        ToggleSlideshow();
     }
 
     // --------------------------------------------------------------- settings
@@ -371,6 +412,7 @@ public sealed class MainWindow : Window
             RequestShow(path, immediate: true);
             await RescanFolderAsync(Path.GetDirectoryName(path), path).ConfigureAwait(true);
             SchedulePrefetch();
+            StartRequestedSlideshow();
         }
         catch (Exception ex)
         {
@@ -391,6 +433,7 @@ public sealed class MainWindow : Window
         _index = 0;
         RequestShow(_files[0], immediate: true);
         SchedulePrefetch();
+        StartRequestedSlideshow();
     }
 
     /// <summary>Rebuilds the file list and locates <paramref name="selectPath"/> within it.</summary>

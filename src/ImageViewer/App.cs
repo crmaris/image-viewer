@@ -12,12 +12,12 @@ namespace ImageViewer;
 /// </remarks>
 public sealed class App : Application
 {
-    private readonly string[] _initialPaths;
+    private readonly LaunchOptions _options;
     private readonly CancellationTokenSource _lifetime = new();
 
-    public App(string[] initialPaths)
+    public App(LaunchOptions options)
     {
-        _initialPaths = initialPaths;
+        _options = options;
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         DispatcherUnhandledException += OnDispatcherUnhandledException;
     }
@@ -30,6 +30,10 @@ public sealed class App : Application
 
         var window = new MainWindow();
         MainWindow = window;
+
+        // Applied before Show so a full-screen launch comes up full screen rather than opening
+        // windowed and visibly snapping a frame later.
+        window.ApplyLaunchOptions(_options);
         StartupTrace.Mark("ctor");
 
         // Show first, decode second: the window is on screen while the image is still being read,
@@ -37,8 +41,8 @@ public sealed class App : Application
         window.Show();
         StartupTrace.Mark("shown");
 
-        if (_initialPaths.Length > 0)
-            window.Open(_initialPaths[0]);
+        if (_options.Paths.Length > 0)
+            window.Open(_options.Paths[0]);
         else
             window.ShowWelcome();   // only here, so the common path never builds the text stack
 
