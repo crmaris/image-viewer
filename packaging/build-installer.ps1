@@ -29,9 +29,14 @@ $publishDir = Join-Path $root "build\portable\$Runtime"
 $outputDir = Join-Path $root 'build'
 
 # Locate the compiler before doing any expensive work.
+# winget installs Inno Setup per-user by default, which puts it under LOCALAPPDATA rather than
+# either Program Files. Omitting that path made this script report Inno Setup as missing on a
+# machine where it was installed and working, and the project carried "Inno Setup is not installed
+# here" as a fact for a week because of it.
 $candidates = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
 )
 $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 

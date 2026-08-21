@@ -43,8 +43,13 @@ pwsh -File packaging/build-installer.ps1
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-218 checks currently pass. Inno Setup 6 is **not installed on this machine**; `build-installer.ps1`
-detects that and tells you how to get it (`winget install JRSoftware.InnoSetup`).
+218 checks currently pass. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
+58.5 MB installer locally in about 40 seconds.
+
+It was long recorded here as "not installed", which was wrong: winget puts Inno Setup under
+`%LOCALAPPDATA%\Programs\Inno Setup 6`, and the script only looked in the two Program Files
+locations. The project carried that as an environment fact for a week when it was a one-line
+bug in the search list.
 
 ---
 
@@ -75,6 +80,15 @@ The extension is only consulted when content cannot decide (gzipped SVG, camera 
 | 2 | **ImageSharp 2.1.13** | JPEG, PNG, GIF, BMP, TIFF, WebP, TGA, PNM — works with no Windows codecs at all |
 | 3 | **Svg.Skia** | SVG, SVGZ (rasterised to viewport size) |
 | 4 | **Magick.NET Q8** | PSD, XCF, EXR, JP2, PCX, HDR, QOI and a few hundred more |
+
+Measured on this machine 2026-08-21 with `imageviewer info`, which reports the tier that answered:
+
+| Tier | Answers for |
+|---|---|
+| WIC | png jpg gif bmp tif **webp** — the WebP and JPEG-XL codecs and the Microsoft Raw Image Decoder are all present here, so RAW does *not* fall through |
+| ImageSharp | pgm ppm tga |
+| Svg.Skia | svg svgz |
+| Magick.NET | exr hdr jp2 pcx psd qoi |
 
 **ImageSharp is pinned to 2.1.13 deliberately.** Version 3.0 moved from Apache-2.0 to the Six Labors
 Split License; building against 4.x emits a "no license found" warning and needs a commercial
@@ -529,6 +543,18 @@ The 28 idle `dotnet.exe ... /nodemode:1` worker processes visible at the time we
 not the cause — an early reading blamed them and was wrong. Nothing needed killing. `obj/` is
 gitignored, so a temp directory under it is a safe target.
 
+### Launching the app to test it hijacks whatever session is already open
+
+The single-instance pipe means a test launch does not start a new process: it hands the path to the
+running instance, which then jumps to that image and pulls itself to the front. During this
+session that interrupted the owner mid-folder, at `IMG_9418.PNG [333/411]`, and made a first-run
+registration test silently measure nothing at all — the launched process had exited immediately
+without ever reaching `RegisterWithShellOnce`.
+
+**Check for a running `ImageViewer.exe` before any GUI test, and read its window title.** CLI
+commands are safe: `CommandLine.IsCommand` short-circuits ahead of `SingleInstance.TryHandOff`, so
+`imageviewer info ...` never touches an open window. That ordering is verified by the self-test.
+
 ### Benchmarking caveat
 
 Startup measured 26–58 s at one point and ~1 s an hour later, on the same binaries. The machine was
@@ -538,6 +564,29 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-08-21 — closing out the pending list
+Verified locally what had only ever been compiled in CI.
+
+- **Inno Setup was installed all along.** `build-installer.ps1` searched only the two Program Files
+  paths; winget installs per-user under `%LOCALAPPDATA%\Programs`. Added that path. The installer
+  now builds locally, 58.5 MB in ~40 s.
+- **The PATH task is verified end to end.** Installed per-user into a folder *with a space in it*,
+  confirmed PATH grew by exactly one semicolon plus the folder, that the value type and the whole
+  existing string were preserved, and that `imageviewer` then resolved from a fresh shell. Uninstall
+  restored PATH **byte-identically**. One side effect found and documented: removal rewrites the
+  value as REG_EXPAND_SZ, so a REG_SZ user PATH is normalised. Harmless, because the guard means we
+  only write when the value holds no `%` at all.
+- **The uninstall [Code] path ran for real**, including `RemoveFromPath`. Only the wizard's own UI
+  clicks remain unexercised.
+- **The decoder tiers were measured** rather than assumed; see the table above. WebP is handled by
+  WIC here, and the Raw Image Decoder is installed.
+- **The Open With clean-machine test could not be run** and was reverted. Clearing the `.qoi` and
+  `.tga` MRU entries and launching the app measured nothing, because the launch handed off to the
+  owner's live session; the registry entries were restored byte-for-byte from a backup. See the
+  handoff caveat above.
+- Note the installed copy on this machine is still **v0.1.1**, which predates settings, the colour
+  fix, the shell registration and the CLI. None of that reaches the owner until a release is cut.
 
 ### 2026-08-14 — full command-line interface
 Added `Cli/` (11 commands), `LaunchOptions` for `--fullscreen` / `--slideshow`, and an installer
@@ -631,21 +680,19 @@ Owner asked for all four outstanding items in one go. 170 checks pass; assembly-
 
 ## Pending / not done
 
-- **A live end-to-end update has still never run.** `LaunchInstaller` is now exercised for real by
-  the suite against a stub executable — argument construction, the shell launch and both failure
-  paths are covered — but Inno Setup's own behaviour during an actual upgrade is not, and cannot be
-  until there is a release newer than the installed build. The install-mode switch in particular
-  deserves watching the first time Ctrl+U does something real.
-- **The interactive uninstall path is unexercised.** The uninstaller has only ever been run
-  `/VERYSILENT`, to correct a mis-targeted install.
-- **The Open With registration has only been proven on this machine**, where the entries already
-  existed. The genuinely new path — a machine with no prior registration, where the app writes the
-  MRU slots itself — has not been observed. The `HasWorkingRegistration` guard is verified though:
-  a `bin\Debug` launch left the installed HKLM registration untouched.
-- **Inno Setup is not installed on this machine**, so local installer builds fail by design.
-  CI builds it instead. Install locally with `winget install JRSoftware.InnoSetup` if needed.
+- **A live end-to-end update has still never run.** The installed copy is v0.1.1 and there is no
+  newer release, so Ctrl+U has nothing to find. `LaunchInstaller` and its argument construction are
+  covered by the suite against a stub, but Inno Setup's behaviour during a real upgrade - the
+  install-mode switch in particular - is only provable by cutting a release and taking the update.
+- **The interactive uninstall wizard is unexercised.** Its `[Code]` path, including the PATH
+  removal, has now been run for real; only the clicking has not.
+- **The Open With registration's first-run path has still not been observed.** Attempted and
+  abandoned this session because a test launch hands off to any running instance rather than
+  registering. Needs either a machine with no prior registration, or a moment when the viewer is
+  definitely closed.
 - **No transform to the monitor's ICC profile.** Everything normalises to sRGB. Correct for ordinary
   displays, slightly oversaturated on a wide-gamut one. See the colour-management section.
-- **NativeAOT launcher stub** for a ~20 ms handoff: designed, deliberately not built.
-- **HEIC/WebP/RAW rely on this machine's installed Windows codecs.** Tier 2 covers WebP on a clean
-  machine; HEIC and RAW would fall through to Magick.NET, which is untested for those here.
+- **NativeAOT launcher stub** for a ~20 ms handoff: designed, deliberately not built. It would add a
+  second executable and deployment complexity for a saving nobody has asked for.
+- **HEIC is still untested here.** WebP and RAW are confirmed handled by WIC on this machine; no
+  HEIC sample was available to try, and Magick.NET cannot write one without a libheif delegate.

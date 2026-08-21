@@ -276,7 +276,15 @@ end;
 
   Refuses to touch a PATH that still holds an unexpanded variable. RegQueryStringValue hands back an
   already-expanded string for a REG_EXPAND_SZ value, so writing it back would bake %SystemRoot% and
-  anything like it into literal paths - considerably worse than leaving one stale entry behind. }
+  anything like it into literal paths - considerably worse than leaving one stale entry behind.
+
+  One observable side effect, verified 2026-08-21 by installing and uninstalling for real: the value
+  is rewritten as REG_EXPAND_SZ, so a user PATH that happened to be a plain REG_SZ comes back as
+  REG_EXPAND_SZ. The content is byte-identical, and because the guard above means we only ever reach
+  this write when the value holds no '%' at all, the two types are semantically identical here.
+  REG_EXPAND_SZ is also the type Windows itself uses for PATH, and the type the install would have
+  created had the value not already existed. Inno's scripting has no way to query a value's type, so
+  preserving it exactly is not available; this is the closest safe behaviour. }
 procedure RemoveFromPath();
 var
   RootKey: Integer;
