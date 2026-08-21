@@ -412,6 +412,23 @@ missing file, and converts a declined UAC prompt (`Win32Exception` 1223) into
 `OperationCanceledException` — which `MainWindow` catches separately so the window is **not** closed
 out from under a user who said no. `Close()` only happens after the launch has actually succeeded.
 
+**Both assumptions behind that design were verified for real on 2026-08-21**, using a throwaway
+per-user install in a non-default folder so nothing on this machine was at risk:
+
+1. *The mode switch is honoured.* Setup run with `/CURRENTUSER` logged
+   `Administrative install mode: No`, which is only possible because
+   `PrivilegesRequiredOverridesAllowed` includes `commandline`. With `dialog` alone the switch is
+   discarded in silence.
+2. *Omitting `/DIR` is correct.* Setup was re-run with the mode switch **and nothing else**, exactly
+   what `LaunchInstaller` passes. It found the existing non-default directory from its own AppId,
+   upgraded in place — a sentinel file dropped there beforehand survived — and did **not** fork a
+   second copy into the default `%LOCALAPPDATA%\Programs\Image Viewer`. It also logged
+   `Detected previous administrative 64-bit install? Yes`, so it is aware of the other copy and
+   still respected the mode it was told.
+
+What that leaves untested is only `Process.Start` handing those arguments over from a live Ctrl+U,
+and the argument construction itself is covered by the suite. The unknowable part is closed.
+
 **Releasing:** push a tag and `.github/workflows/release.yml` does the rest — it stamps the version
 into the csproj (so the shipped binary reports the same number the updater compares), runs the full
 self-test *and* the assembly-load check, builds the portable zip and the installer, and attaches
@@ -566,6 +583,19 @@ system load before trusting any startup number**, and re-measure when the machin
 
 ## Session log
 
+### 2026-08-21 — the install-mode design verified against real Setup runs
+Proved the two assumptions `LaunchInstaller` rests on, without waiting for a release after v0.2.0
+and without touching the real installation. Full detail in "The install-mode trap" above.
+
+- Installed per-user into `...\Temp\iv modetest` — a **non-default** folder, which is what makes
+  the test meaningful — then re-ran Setup with `/CURRENTUSER` and nothing else.
+- It upgraded in place (a sentinel file planted beforehand survived), did not fork into
+  `%LOCALAPPDATA%\Programs`, and logged `Administrative install mode: No`, proving the
+  `commandline` override is live.
+- Uninstalling removed everything Setup had installed and correctly left the sentinel alone; the
+  folder and the HKCU uninstall key both went. The real all-users 0.2.0 install, its associations
+  and its PATH entry were all confirmed untouched afterwards.
+
 ### 2026-08-21 — v0.2.0 released and installed; Open With finally observed
 Cut v0.2.0, installed it over the v0.1.1 all-users install, and closed three more pending items.
 
@@ -708,9 +738,11 @@ Owner asked for all four outstanding items in one go. 170 checks pass; assembly-
 
 ## Pending / not done
 
-- **The install-mode switch has still never run for real.** It ships in the v0.2.0 client, so the
-  first release *after* 0.2.0 is the first chance to see Ctrl+U pass `/ALLUSERS` and land back in
-  Program Files rather than forking a per-user copy. Worth watching once, deliberately.
+- **Ctrl+U has still never driven a real upgrade**, though the risky part of it is now proven.
+  Setup's own behaviour under a bare mode switch was verified directly (see the install-mode
+  section): it honours the switch and reuses the recorded install directory without `/DIR`. What has
+  not happened is the v0.2.0 client invoking that from a live update, which is `Process.Start` with
+  arguments the suite already checks. The first release after 0.2.0 will show it.
 - **The interactive uninstall wizard is unexercised.** Its `[Code]` path, PATH removal included, has
   been run for real; only the clicking has not.
 - **No transform to the monitor's ICC profile.** Everything normalises to sRGB. Correct for ordinary
