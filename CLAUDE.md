@@ -583,6 +583,20 @@ system load before trusting any startup number**, and re-measure when the machin
 
 ## Session log
 
+### 2026-08-21 — HEIC codec confirmed, uninstall wizard exercised
+
+- **HEIC is handled by WIC on this machine after all.** `Microsoft.HEIFImageExtension 1.2.48.0` is
+  installed, alongside the WebP and Raw extensions. Feeding WPF a deliberately malformed 24-byte
+  HEIC stub returned **0xC00D36BE** (`MF_E_INVALID_FILE_FORMAT`) rather than **0x88982F50**
+  (`WINCODEC_ERR_COMPONENTNOTFOUND`) — a decoder was found and dispatched to, and rejected the
+  content. A missing codec produces the other error. That is as far as this can be taken without a
+  real HEIC file, which nothing here can produce: Magick.NET needs a libheif delegate to write one.
+- **The uninstall wizard's UI path now runs.** Uninstalling with `/SILENT` rather than
+  `/VERYSILENT` puts the real wizard and its progress window on screen while suppressing only the
+  prompts. On a scratch per-user install it removed the folder, the HKCU uninstall key and the PATH
+  entry, and PATH came back **byte-identical** to the pre-install backup for the second time. The
+  only thing left unexercised is the initial "are you sure" confirmation click.
+
 ### 2026-08-21 — the install-mode design verified against real Setup runs
 Proved the two assumptions `LaunchInstaller` rests on, without waiting for a release after v0.2.0
 and without touching the real installation. Full detail in "The install-mode trap" above.
@@ -743,13 +757,15 @@ Owner asked for all four outstanding items in one go. 170 checks pass; assembly-
   section): it honours the switch and reuses the recorded install directory without `/DIR`. What has
   not happened is the v0.2.0 client invoking that from a live update, which is `Process.Start` with
   arguments the suite already checks. The first release after 0.2.0 will show it.
-- **The interactive uninstall wizard is unexercised.** Its `[Code]` path, PATH removal included, has
-  been run for real; only the clicking has not.
+- **Only the uninstaller's confirmation click is unexercised.** The wizard UI, its progress window,
+  the `[Code]` path and the PATH removal have all now been run for real via `/SILENT`; `/VERYSILENT`
+  had previously covered only the silent path. What remains is one "are you sure" button.
 - **No transform to the monitor's ICC profile.** Everything normalises to sRGB. Correct for ordinary
-  displays, slightly oversaturated on a wide-gamut one. See the colour-management section. Offered
-  and declined 2026-08-21.
+  displays, slightly oversaturated on a wide-gamut one. See the colour-management section. Raised
+  2026-08-21 and left deferred; no decision was given either way.
 - **NativeAOT launcher stub** for a ~20 ms handoff: designed, deliberately not built. It would add a
   second executable to the installer and the release pipeline for a saving nobody has asked for.
-  Offered and declined 2026-08-21.
-- **HEIC is still untested here.** WebP and RAW are confirmed handled by WIC on this machine; no
-  HEIC sample was available, and Magick.NET cannot write one without a libheif delegate.
+  Raised 2026-08-21 and left deferred; no decision was given either way.
+- **No HEIC file has actually been opened**, though the codec is confirmed present and reachable
+  (see the 2026-08-21 log entry). Testing it properly needs a real HEIC from a phone; nothing on
+  this machine can produce one.
