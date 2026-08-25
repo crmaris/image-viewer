@@ -6,8 +6,8 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.1 in source and packaging; 0.2.0 remains the currently released all-users
-  installation at `C:\Program Files\Image Viewer`, with the CLI on the machine PATH.
+- **Version:** 0.2.1, released and installed all-users at `C:\Program Files\Image Viewer`, with the
+  CLI on the machine PATH.
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
@@ -475,8 +475,8 @@ test. Note that running it writes the throttle timestamp, so the app will skip i
 - CodeQL default setup scans C# weekly and on relevant pushes/PRs with the extended query suite.
   Its threat model is `remote`: local file paths and user-launched local commands are core desktop
   app inputs, and treating every local input as hostile produced 87 non-actionable path alerts.
-- GitHub immutable releases are enabled for future releases. Existing v0.2.0 predates that setting
-  and remains mutable, so replace it as latest rather than claiming it was retroactively protected.
+- GitHub immutable releases are enabled. Existing v0.2.0 predates that setting and remains mutable;
+  latest v0.2.1 is verified immutable with both release-asset digests populated.
 - There is no Authenticode certificate or signing secret in the repository. Do not fabricate a
   self-signed publisher identity; the current executable-integrity chain is GitHub's release asset
   digest, updater SHA-256 verification and release immutability.
@@ -623,9 +623,17 @@ system load before trusting any startup number**, and re-measure when the machin
   setup. CodeQL's successful remote-threat-model scan has zero open alerts; Dependabot has zero
   current alerts.
 - Guarded Release validation passed all **238/238** self-checks, the separate 48-decode assembly
-  check, and a live v0.2.0 API download whose 61,308,793-byte installer matched GitHub's SHA-256
-  digest and PE header. The local v0.2.1 installer is 61,328,368 bytes with SHA-256
-  `50b55d33cd7b248efe94116d9a453643d4326da95a819c125acd4443ddd53af1`.
+  check, and a live API download whose installer matched GitHub's SHA-256 digest and PE header.
+- PR #1 merged as `cf86f1d6d02850b10de7d67d7e617720dcdce5e1`. Release workflow
+  **32798208943** then published v0.2.1 successfully in 2m08s. GitHub reports the release immutable;
+  the 61,314,460-byte installer digest is
+  `sha256:e00b1bd4fbe3eaf6513eb70e33de0a0cfac23d0f812a24176d0a31917f9698f5`, and the
+  84,182,571-byte portable zip digest is
+  `sha256:bad89633e253220de52d735a5b84045dc037f8040de459728595d5b84afaa065`.
+- A 0.0.1 client found v0.2.1, downloaded the published installer and passed all 10 live size,
+  digest, partial-file and PE checks. The exact hash-verified asset then upgraded the all-users
+  installation with exit code 0: binary and HKLM uninstall entry both report 0.2.1, no HKCU or
+  `%LOCALAPPDATA%` duplicate exists, and the machine PATH entry remains intact.
 
 ### 2026-08-21 — HEIC codec confirmed, uninstall wizard exercised
 
@@ -796,11 +804,11 @@ Owner asked for all four outstanding items in one go. 170 checks pass; assembly-
 
 ## Pending / not done
 
-- **Ctrl+U has still never driven a real upgrade**, though the risky part of it is now proven.
-  Setup's own behaviour under a bare mode switch was verified directly (see the install-mode
-  section): it honours the switch and reuses the recorded install directory without `/DIR`. What has
-  not happened is the v0.2.0 client invoking that from a live update, which is `Process.Start` with
-  arguments the suite already checks. The first release after 0.2.0 will show it.
+- **Ctrl+U has still never driven a real upgrade**, although every component around that UI action is
+  now proven. A 0.0.1 client downloaded and verified the immutable v0.2.1 asset, the suite exercised
+  `Process.Start` with the digest recheck and mode arguments, and the exact published installer
+  upgraded the recorded all-users directory without a duplicate. Windows app control could not
+  acquire Image Viewer's blank startup window, so the UI-only Ctrl+U observation was not invented.
 - **Only the uninstaller's confirmation click is unexercised.** The wizard UI, its progress window,
   the `[Code]` path and the PATH removal have all now been run for real via `/SILENT`; `/VERYSILENT`
   had previously covered only the silent path. What remains is one "are you sure" button.
