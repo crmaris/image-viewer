@@ -1198,7 +1198,7 @@ public sealed class MainWindow : Window
 
             // Matched to how this copy was installed, so an all-users installation cannot be
             // "updated" into a second per-user copy sitting alongside the original.
-            AppUpdateService.LaunchInstaller(installer);
+            AppUpdateService.LaunchInstaller(installer, update.InstallerDigest!);
 
             // The installer cannot replace files this process holds open, so it has to close now.
             // Only after the launch has actually succeeded - closing first would leave the user

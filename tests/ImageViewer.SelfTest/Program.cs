@@ -456,6 +456,62 @@ public static class Program
         foreach (var (url, why) in rejected)
             Check($"rejects {why}", !AppUpdateService.IsAllowedDownload(url), url);
 
+        var validDigest = "sha256:" + new string('a', 64);
+        Check("accepts a complete SHA-256 asset digest",
+            AppUpdateService.IsAllowedDigest(validDigest));
+
+        var rejectedDigests = new (string? Digest, string Why)[]
+        {
+            (null, "a missing digest"),
+            ("", "an empty digest"),
+            ("sha1:" + new string('a', 40), "the wrong algorithm"),
+            ("sha256:" + new string('a', 63), "a truncated digest"),
+            ("sha256:" + new string('z', 64), "non-hexadecimal digest data"),
+        };
+
+        foreach (var (digest, why) in rejectedDigests)
+            Check($"rejects {why}", !AppUpdateService.IsAllowedDigest(digest));
+
+        var acceptedInstallerNames = new[]
+        {
+            "ImageViewer-0.2.1-setup.exe",
+            "setup.exe",
+        };
+        foreach (var name in acceptedInstallerNames)
+            Check($"accepts installer filename '{name}'", AppUpdateService.IsSafeInstallerName(name));
+
+        var rejectedInstallerNames = new string?[]
+        {
+            null,
+            "",
+            @"..\ImageViewer-setup.exe",
+            "folder/ImageViewer-setup.exe",
+            "ImageViewer-setup.exe:stream",
+        };
+        foreach (var name in rejectedInstallerNames)
+            Check($"rejects installer path '{name ?? "null"}'",
+                !AppUpdateService.IsSafeInstallerName(name));
+
+        var digestFile = Path.Combine(Path.GetTempPath(), $"imageviewer-digest-{Guid.NewGuid():N}.bin");
+        try
+        {
+            var payload = System.Text.Encoding.UTF8.GetBytes("verified installer payload");
+            File.WriteAllBytes(digestFile, payload);
+            var expected = "sha256:" + Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant();
+
+            Check("a file matching the published SHA-256 digest is accepted",
+                AppUpdateService.HasExpectedDigest(digestFile, expected));
+
+            File.AppendAllText(digestFile, "tampered");
+            Check("a file that changed after publication is rejected",
+                !AppUpdateService.HasExpectedDigest(digestFile, expected));
+        }
+        finally
+        {
+            try { File.Delete(digestFile); } catch { /* best effort */ }
+        }
+
         Check("the update service names a repository",
             !string.IsNullOrWhiteSpace(AppUpdateService.RepositoryOwner) &&
             !string.IsNullOrWhiteSpace(AppUpdateService.RepositoryName));
@@ -578,6 +634,29 @@ public static class Program
         Check("app.ico exists and holds several sizes",
             icon is not null && new FileInfo(icon).Length > 10_000,
             icon is null ? "not found" : $"only {new FileInfo(icon).Length} bytes");
+
+        var portableScript = FindRepoFile("packaging", "build-portable.ps1");
+        var installerScript = FindRepoFile("packaging", "build-installer.ps1");
+        var resolverScript = FindRepoFile("packaging", "resolve-version.ps1");
+
+        Check("packaging has one shared version resolver",
+            resolverScript is not null && portableScript is not null && installerScript is not null);
+
+        if (portableScript is not null && installerScript is not null)
+        {
+            var portableText = File.ReadAllText(portableScript);
+            var installerText = File.ReadAllText(installerScript);
+
+            Check("portable builds stamp the resolved version into the binary",
+                portableText.Contains("-p:Version=$resolvedVersion", StringComparison.Ordinal));
+
+            Check("installer builds pass the same version into Inno Setup",
+                installerText.Contains("/DAppVersion=$resolvedVersion", StringComparison.Ordinal));
+
+            Check("both packaging paths use the shared version resolver",
+                portableText.Contains("resolve-version.ps1", StringComparison.Ordinal) &&
+                installerText.Contains("resolve-version.ps1", StringComparison.Ordinal));
+        }
     }
 
     /// <summary>Walks up from the test binary to find a file in the repository.</summary>

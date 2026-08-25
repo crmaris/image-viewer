@@ -341,7 +341,7 @@ internal static class FeatureChecks
         if (File.Exists(absent)) File.Delete(absent);
 
         var threw = false;
-        try { AppUpdateService.LaunchInstaller(absent); }
+        try { AppUpdateService.LaunchInstaller(absent, "sha256:" + new string('0', 64)); }
         catch (FileNotFoundException) { threw = true; }
         catch { /* any other failure is a different bug, reported by the check below */ }
 
@@ -363,12 +363,27 @@ internal static class FeatureChecks
         }
 
         File.Copy(systemExe, installer, overwrite: true);
+        var installerDigest = "sha256:" + Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(installer)))
+            .ToLowerInvariant();
 
         try
         {
+            var rejectedChangedFile = false;
+            try
+            {
+                AppUpdateService.LaunchInstaller(
+                    installer, "sha256:" + new string('0', 64), AppUpdateService.InstallMode.Unknown);
+            }
+            catch (InvalidDataException)
+            {
+                rejectedChangedFile = true;
+            }
+            check("an installer that changed after download is not executed", rejectedChangedFile);
+
             // Unknown mode on purpose: the stub is not Inno Setup and would reject /ALLUSERS.
             var process = AppUpdateService.LaunchInstaller(
-                installer, AppUpdateService.InstallMode.Unknown);
+                installer, installerDigest, AppUpdateService.InstallMode.Unknown);
 
             check("LaunchInstaller actually starts the downloaded executable", process is not null);
 

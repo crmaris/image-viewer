@@ -10,7 +10,9 @@
 ; default themselves via "Open with -> Choose another app", or Settings > Default apps.
 
 #define AppName        "Image Viewer"
-#define AppVersion     "0.1.0"
+#ifndef AppVersion
+  #define AppVersion   "0.2.1"
+#endif
 #define AppPublisher   "Aris Mpitziopoulos"
 #define AppExeName     "ImageViewer.exe"
 #define ProgId         "ImageViewer.Image"

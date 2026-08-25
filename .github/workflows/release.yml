@@ -1,14 +1,16 @@
-# Builds the portable zip and the installer, and attaches both to a GitHub Release.
+# Builds the portable zip and installer, attaches both to a draft, then publishes the complete
+# release. Draft-first publication is required when immutable releases are enabled: publishing an
+# empty release would lock it before its assets could be attached.
 #
 # The in-app updater looks for an asset whose name contains "setup" and ends in ".exe", so the
 # installer produced here is what it downloads. Publishing a release without that asset is not an
 # error - the updater falls back to opening the release page in a browser.
 #
 # Trigger by pushing a version tag:
-#   git tag v0.2.0 && git push origin v0.2.0
+#   git tag v0.2.1 && git push origin v0.2.1
 #
-# The tag is the source of truth for the version: it is written into the csproj before building, so
-# the running app reports the same number the updater compares against.
+# The tag is the source of truth for the version: it is passed explicitly into every build, so the
+# running app reports the same number the updater compares against without modifying tracked files.
 
 name: Release
 
@@ -19,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build, without the leading v (e.g. 0.2.0)'
+        description: 'Version to build, without the leading v (e.g. 0.2.1)'
         required: true
 
 permissions:
@@ -50,42 +52,22 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Building version $version"
 
-      - name: Stamp the version into the project
-        shell: pwsh
-        run: |
-          # Keeps the built binary's version in step with the tag, so the updater's comparison is
-          # against what actually shipped rather than whatever was last committed.
-          $csproj = 'src/ImageViewer/ImageViewer.csproj'
-          $text = Get-Content $csproj -Raw
-          $text = $text -replace '<Version>[^<]*</Version>', "<Version>${{ steps.version.outputs.version }}</Version>"
-          Set-Content $csproj $text -NoNewline
-          Select-String -Path $csproj -Pattern '<Version>'
-
-          # The .iss carries its own AppVersion, which drives both the installer's displayed
-          # version and its output filename. Stamping only the csproj shipped v0.1.1 as an asset
-          # named ImageViewer-0.1.0-setup.exe that reported 0.1.0 in Add/Remove Programs.
-          $iss = 'packaging/ImageViewer.iss'
-          $issText = Get-Content $iss -Raw
-          $issText = $issText -replace '(#define\s+AppVersion\s+)"[^"]*"', "`${1}`"${{ steps.version.outputs.version }}`""
-          Set-Content $iss $issText -NoNewline
-          Select-String -Path $iss -Pattern '#define\s+AppVersion'
-
       - name: Run the self-test
         shell: pwsh
         run: |
           # The corpus has to be generated first, or the fallback decoder tiers are never exercised.
-          dotnet run --project tests/ImageViewer.SelfTest -- --make-corpus testimages
-          dotnet run --project tests/ImageViewer.SelfTest -- testimages
+          dotnet run --project tests/ImageViewer.SelfTest -p:Version=${{ steps.version.outputs.version }} -- --make-corpus testimages
+          dotnet run --project tests/ImageViewer.SelfTest -p:Version=${{ steps.version.outputs.version }} -- testimages
 
       - name: Verify the heavy decoders stay unloaded
         shell: pwsh
         run: |
           # Must be a separate process: the suite above deliberately loads every tier.
-          dotnet run --project tests/ImageViewer.SelfTest -- --assembly-check testimages
+          dotnet run --project tests/ImageViewer.SelfTest -p:Version=${{ steps.version.outputs.version }} -- --assembly-check testimages
 
       - name: Build the portable package
         shell: pwsh
-        run: pwsh -File packaging/build-portable.ps1
+        run: pwsh -File packaging/build-portable.ps1 -Version ${{ steps.version.outputs.version }}
 
       - name: Install Inno Setup
         shell: pwsh
@@ -93,16 +75,52 @@ jobs:
 
       - name: Build the installer
         shell: pwsh
-        run: pwsh -File packaging/build-installer.ps1 -SkipPublish
+        run: pwsh -File packaging/build-installer.ps1 -Version ${{ steps.version.outputs.version }} -SkipPublish
 
-      - name: Publish the release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: Image Viewer ${{ steps.version.outputs.version }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            build/ImageViewer-*-setup.exe
-            build/ImageViewer-portable-*.zip
+      - name: Create a draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v${{ steps.version.outputs.version }}'
+          $existingDraft = gh release view $tag `
+            --repo $env:GITHUB_REPOSITORY `
+            --json isDraft `
+            --jq .isDraft 2>$null
+
+          if ($LASTEXITCODE -eq 0) {
+            if ($existingDraft -ne 'true') {
+              throw "Release $tag already exists and is published; immutable releases cannot be replaced."
+            }
+            Write-Host "Reusing existing draft release $tag."
+          } else {
+            gh release create $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --target $env:GITHUB_SHA `
+              --title 'Image Viewer ${{ steps.version.outputs.version }}' `
+              --generate-notes `
+              --draft
+          }
+
+      - name: Upload and verify release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v${{ steps.version.outputs.version }}'
+          $assets = @(
+            Get-ChildItem build -Filter 'ImageViewer-*-setup.exe'
+            Get-ChildItem build -Filter 'ImageViewer-portable-*.zip'
+          )
+          if ($assets.Count -ne 2) { throw "Expected two release assets, found $($assets.Count)." }
+          $assets | Get-FileHash -Algorithm SHA256 | Format-Table -AutoSize
+          gh release upload $tag @($assets.FullName) --repo $env:GITHUB_REPOSITORY --clobber
+
+      - name: Publish the complete release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit 'v${{ steps.version.outputs.version }}' `
+            --repo $env:GITHUB_REPOSITORY `
+            --draft=false

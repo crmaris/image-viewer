@@ -6,6 +6,7 @@ namespace ImageViewer.Update;
 /// <param name="InstallerUrl">Direct download for the setup executable, if the release has one.</param>
 /// <param name="InstallerName">File name of that asset.</param>
 /// <param name="InstallerSizeBytes">Expected size, checked after download.</param>
+/// <param name="InstallerDigest">GitHub's SHA-256 asset digest, checked after download.</param>
 /// <param name="ReleasePageUrl">Human-readable release page, used when there is no installer asset.</param>
 /// <param name="Notes">Release notes body, trimmed for display.</param>
 public sealed record UpdateInfo(
@@ -14,6 +15,7 @@ public sealed record UpdateInfo(
     string? InstallerUrl,
     string? InstallerName,
     long InstallerSizeBytes,
+    string? InstallerDigest,
     string ReleasePageUrl,
     string? Notes)
 {
@@ -24,5 +26,8 @@ public sealed record UpdateInfo(
     /// A release with no setup asset - or a portable copy running from a folder the user manages
     /// themselves - is offered as a link rather than an automatic install.
     /// </remarks>
-    public bool CanInstallAutomatically => !string.IsNullOrEmpty(InstallerUrl);
+    public bool CanInstallAutomatically =>
+        !string.IsNullOrEmpty(InstallerUrl) &&
+        AppUpdateService.IsSafeInstallerName(InstallerName) &&
+        AppUpdateService.IsAllowedDigest(InstallerDigest);
 }

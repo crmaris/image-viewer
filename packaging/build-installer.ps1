@@ -9,6 +9,9 @@
     Requires Inno Setup 6, which is NOT bundled: https://jrsoftware.org/isdl.php
     Or via winget:  winget install JRSoftware.InnoSetup
 
+.PARAMETER Version
+    Package version. Defaults to an exact v* tag on HEAD, then the csproj Version.
+
 .PARAMETER SkipPublish
     Reuse the existing build/portable output instead of republishing.
 
@@ -18,6 +21,7 @@
 [CmdletBinding()]
 param(
     [string]$Runtime = 'win-x64',
+    [string]$Version,
     [switch]$SkipPublish
 )
 
@@ -27,6 +31,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $script = Join-Path $PSScriptRoot 'ImageViewer.iss'
 $publishDir = Join-Path $root "build\portable\$Runtime"
 $outputDir = Join-Path $root 'build'
+$resolvedVersion = & (Join-Path $PSScriptRoot 'resolve-version.ps1') -Version $Version
 
 # Locate the compiler before doing any expensive work.
 # winget installs Inno Setup per-user by default, which puts it under LOCALAPPDATA rather than
@@ -56,7 +61,8 @@ if (-not $iscc) {
 Write-Host "Inno Setup: $iscc" -ForegroundColor DarkGray
 
 if (-not $SkipPublish) {
-    & (Join-Path $PSScriptRoot 'build-portable.ps1') -Runtime $Runtime -SkipZip
+    & (Join-Path $PSScriptRoot 'build-portable.ps1') `
+        -Runtime $Runtime -Version $resolvedVersion -SkipZip
     if ($LASTEXITCODE -ne 0) { throw "Publish step failed." }
 }
 
@@ -69,6 +75,7 @@ Write-Host "`nCompiling installer..." -ForegroundColor Cyan
 & $iscc `
     "/DSourceDir=$publishDir" `
     "/DOutputDir=$outputDir" `
+    "/DAppVersion=$resolvedVersion" `
     $script
 
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }

@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Win32;
 
@@ -19,8 +20,8 @@ namespace ImageViewer.Update;
 /// without the user explicitly asking for it.
 /// </para>
 /// <para>
-/// Downloads are restricted to GitHub hosts for the configured repository, so a tampered or
-/// unexpected API response cannot redirect the updater to an arbitrary server.
+/// Downloads are restricted to GitHub hosts for the configured repository and must carry a valid
+/// SHA-256 asset digest. The bytes are verified before the installer receives its final name.
 /// </para>
 /// </remarks>
 public sealed class AppUpdateService
@@ -136,7 +137,7 @@ public sealed class AppUpdateService
             var version = ParseVersion(tag);
             if (version is null || version <= CurrentVersion) return null;
 
-            var (url, name, size) = FindInstallerAsset(root);
+            var (url, name, size, digest) = FindInstallerAsset(root);
 
             var page = root.TryGetProperty("html_url", out var html)
                 ? html.GetString() ?? ReleasesPageUrl
@@ -144,7 +145,7 @@ public sealed class AppUpdateService
 
             var notes = root.TryGetProperty("body", out var body) ? body.GetString() : null;
 
-            return new UpdateInfo(version, tag!, url, name, size, page, Trim(notes));
+            return new UpdateInfo(version, tag!, url, name, size, digest, page, Trim(notes));
         }
         catch
         {
@@ -154,28 +155,33 @@ public sealed class AppUpdateService
     }
 
     /// <summary>Picks the setup executable from a release's assets.</summary>
-    private static (string? Url, string? Name, long Size) FindInstallerAsset(JsonElement release)
+    private static (string? Url, string? Name, long Size, string? Digest) FindInstallerAsset(
+        JsonElement release)
     {
         if (!release.TryGetProperty("assets", out var assets) ||
             assets.ValueKind != JsonValueKind.Array)
         {
-            return (null, null, 0);
+            return (null, null, 0, null);
         }
 
         foreach (var asset in assets.EnumerateArray())
         {
             var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
-            if (name is null || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!IsSafeInstallerName(name) ||
+                !name!.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
             if (!name.Contains("setup", StringComparison.OrdinalIgnoreCase)) continue;
 
             var url = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
             if (url is null || !IsAllowedDownload(url)) continue;
 
             var size = asset.TryGetProperty("size", out var s) && s.TryGetInt64(out var bytes) ? bytes : 0;
-            return (url, name, size);
+            var digest = asset.TryGetProperty("digest", out var d) ? d.GetString() : null;
+            if (!IsAllowedDigest(digest)) continue;
+
+            return (url, name, size, digest);
         }
 
-        return (null, null, 0);
+        return (null, null, 0, null);
     }
 
     /// <summary>
@@ -190,6 +196,46 @@ public sealed class AppUpdateService
         uri.Scheme == Uri.UriSchemeHttps &&
         AllowedDownloadHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Rejects path components and invalid characters in a release asset name.</summary>
+    public static bool IsSafeInstallerName(string? name) =>
+        !string.IsNullOrWhiteSpace(name) &&
+        name == Path.GetFileName(name) &&
+        name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+
+    /// <summary>True only for a complete SHA-256 digest in GitHub's asset-digest format.</summary>
+    public static bool IsAllowedDigest(string? digest)
+    {
+        const string prefix = "sha256:";
+        if (digest is null || !digest.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var hex = digest.AsSpan(prefix.Length);
+        if (hex.Length != 64) return false;
+
+        foreach (var character in hex)
+        {
+            if (!Uri.IsHexDigit(character)) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Hashes a file and compares it with a validated GitHub SHA-256 digest.</summary>
+    internal static bool HasExpectedDigest(string path, string? expectedDigest)
+    {
+        using var stream = File.OpenRead(path);
+        return HasExpectedDigest(stream, expectedDigest);
+    }
+
+    private static bool HasExpectedDigest(Stream stream, string? expectedDigest)
+    {
+        if (!IsAllowedDigest(expectedDigest)) return false;
+
+        var expected = Convert.FromHexString(expectedDigest!["sha256:".Length..]);
+        var actual = SHA256.HashData(stream);
+        return CryptographicOperations.FixedTimeEquals(actual, expected);
+    }
+
     /// <summary>
     /// Downloads the installer to a temporary folder.
     /// </summary>
@@ -197,13 +243,16 @@ public sealed class AppUpdateService
     public async Task<string> DownloadInstallerAsync(
         UpdateInfo update, IProgress<double>? progress, CancellationToken ct)
     {
-        if (update.InstallerUrl is null || !IsAllowedDownload(update.InstallerUrl))
+        if (update.InstallerUrl is null ||
+            !IsAllowedDownload(update.InstallerUrl) ||
+            !IsSafeInstallerName(update.InstallerName) ||
+            !IsAllowedDigest(update.InstallerDigest))
             throw new InvalidOperationException("This release has no installer that can be downloaded safely.");
 
         var folder = Path.Combine(Path.GetTempPath(), "ImageViewerUpdate");
         Directory.CreateDirectory(folder);
 
-        var target = Path.Combine(folder, update.InstallerName ?? "ImageViewer-setup.exe");
+        var target = Path.Combine(folder, update.InstallerName!);
 
         // A partial file left by an interrupted attempt must never be executed.
         var partial = target + ".part";
@@ -243,6 +292,13 @@ public sealed class AppUpdateService
             File.Delete(partial);
             throw new IOException(
                 $"The download is incomplete ({actual:N0} of {update.InstallerSizeBytes:N0} bytes).");
+        }
+
+        if (!HasExpectedDigest(partial, update.InstallerDigest))
+        {
+            File.Delete(partial);
+            throw new InvalidDataException(
+                "The downloaded installer's SHA-256 digest does not match the published release asset.");
         }
 
         if (File.Exists(target)) File.Delete(target);
@@ -341,14 +397,23 @@ public sealed class AppUpdateService
     /// why the message distinguishes it.
     /// </remarks>
     /// <returns>The started process, or null if the shell handed the file to a running instance.</returns>
-    public static Process? LaunchInstaller(string installerPath) =>
-        LaunchInstaller(installerPath, DetectInstallMode());
+    public static Process? LaunchInstaller(string installerPath, string expectedDigest) =>
+        LaunchInstaller(installerPath, expectedDigest, DetectInstallMode());
 
-    /// <inheritdoc cref="LaunchInstaller(string)"/>
-    public static Process? LaunchInstaller(string installerPath, InstallMode mode)
+    /// <inheritdoc cref="LaunchInstaller(string, string)"/>
+    public static Process? LaunchInstaller(
+        string installerPath, string expectedDigest, InstallMode mode)
     {
         if (!File.Exists(installerPath))
             throw new FileNotFoundException("The downloaded installer is no longer there.", installerPath);
+
+        // Keep the verified file read-locked until Process.Start has opened it. Without this lock,
+        // another process could replace the bytes between the digest check and execution.
+        using var installerLock = new FileStream(
+            installerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (!HasExpectedDigest(installerLock, expectedDigest))
+            throw new InvalidDataException(
+                "The installer changed after download and will not be executed.");
 
         var start = new ProcessStartInfo
         {

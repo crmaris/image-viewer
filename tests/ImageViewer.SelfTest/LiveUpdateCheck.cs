@@ -73,6 +73,7 @@ public static class LiveUpdateCheck
         Console.WriteLine($"    found      {update.TagName}  ->  version {update.Version}");
         Console.WriteLine($"    asset      {update.InstallerName}");
         Console.WriteLine($"    size       {update.InstallerSizeBytes / (1024.0 * 1024):N1} MB");
+        Console.WriteLine($"    digest     {update.InstallerDigest}");
         Console.WriteLine($"    url        {update.InstallerUrl}");
         Console.WriteLine($"    page       {update.ReleasePageUrl}");
         Console.WriteLine();
@@ -87,6 +88,10 @@ public static class LiveUpdateCheck
             update.InstallerUrl is not null && AppUpdateService.IsAllowedDownload(update.InstallerUrl));
 
         Check("the asset's size was reported", update.InstallerSizeBytes > 0);
+
+        Check("the asset has a valid SHA-256 digest",
+            AppUpdateService.IsAllowedDigest(update.InstallerDigest),
+            update.InstallerDigest ?? "missing");
 
         if (download && update.CanInstallAutomatically)
         {
@@ -118,6 +123,9 @@ public static class LiveUpdateCheck
                 Check("the downloaded size matches what the release declared",
                     info.Length == update.InstallerSizeBytes,
                     $"{info.Length:N0} vs {update.InstallerSizeBytes:N0}");
+
+                Check("the downloaded SHA-256 digest matches the release",
+                    AppUpdateService.HasExpectedDigest(path, update.InstallerDigest));
 
                 // A truncated download must never be left behind wearing the final name.
                 Check("no partial file was left behind",
