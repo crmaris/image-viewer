@@ -634,6 +634,11 @@ system load before trusting any startup number**, and re-measure when the machin
   digest, partial-file and PE checks. The exact hash-verified asset then upgraded the all-users
   installation with exit code 0: binary and HKLM uninstall entry both report 0.2.1, no HKCU or
   `%LOCALAPPDATA%` duplicate exists, and the machine PATH entry remains intact.
+- Dependabot's first Actions scan raised PRs #2 and #3 for the Node 24 migrations. Both narrow
+  updates passed CI and merged: `actions/checkout@v7` at `7da7609` and `actions/setup-dotnet@v6` at
+  `cd567bc`. Final `main` CodeQL run **32798916467** and full CI run **32798916621** passed with the
+  upgraded actions; CI rebuilt, ran the suite and decoder invariant, published portable output and
+  compiled the installer in 2m26s.
 
 ### 2026-08-21 — HEIC codec confirmed, uninstall wizard exercised
 
