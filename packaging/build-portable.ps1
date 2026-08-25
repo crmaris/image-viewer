@@ -11,6 +11,9 @@
 .PARAMETER Runtime
     Target RID. win-x64 unless you are building for ARM.
 
+.PARAMETER Version
+    Package version. Defaults to an exact v* tag on HEAD, then the csproj Version.
+
 .PARAMETER SkipZip
     Leave the published folder without packing it, for quick local testing.
 
@@ -21,6 +24,7 @@
 param(
     [string]$Runtime = 'win-x64',
     [string]$Configuration = 'Release',
+    [string]$Version,
     [switch]$SkipZip
 )
 
@@ -30,6 +34,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $project = Join-Path $root 'src\ImageViewer\ImageViewer.csproj'
 $outDir = Join-Path $root "build\portable\$Runtime"
 $zipPath = Join-Path $root "build\ImageViewer-portable-$Runtime.zip"
+$resolvedVersion = & (Join-Path $PSScriptRoot 'resolve-version.ps1') -Version $Version
 
 if (-not (Test-Path $project)) { throw "Project not found: $project" }
 
@@ -38,7 +43,7 @@ if (-not (Test-Path $project)) { throw "Project not found: $project" }
 
 if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
 
-Write-Host "Publishing $Configuration / $Runtime ..." -ForegroundColor Cyan
+Write-Host "Publishing $Configuration / $Runtime / v$resolvedVersion ..." -ForegroundColor Cyan
 
 dotnet publish $project `
     -c $Configuration `
@@ -46,6 +51,7 @@ dotnet publish $project `
     --self-contained true `
     -p:PublishReadyToRun=true `
     -p:PublishSingleFile=false `
+    "-p:Version=$resolvedVersion" `
     -p:DebugType=none `
     -p:SatelliteResourceLanguages=en `
     -o $outDir `

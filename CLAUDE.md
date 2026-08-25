@@ -6,8 +6,8 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.0 (released and installed all-users at `C:\Program Files\Image Viewer`,
-  with the CLI on the machine PATH)
+- **Version:** 0.2.1 in source and packaging; 0.2.0 remains the currently released all-users
+  installation at `C:\Program Files\Image Viewer`, with the CLI on the machine PATH.
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
@@ -40,11 +40,17 @@ pwsh -File packaging/build-portable.ps1
 pwsh -File packaging/build-installer.ps1
 ```
 
+Both packaging scripts accept `-Version`; `packaging/resolve-version.ps1` resolves an explicit
+version first, then an exact `v*` tag on `HEAD`, then the csproj's `<Version>`. The same resolved
+value is passed to `dotnet publish`, the portable archive and Inno Setup. Do not edit version files
+inside release automation: the tag is authoritative for a release, while the csproj is the local
+development fallback.
+
 `--make-corpus` writes PSD/TGA/EXR/JP2/QOI/SVG/animated-GIF test files using Magick.NET; run it once
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-218 checks currently pass. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
+238 checks currently pass. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
 58.5 MB installer locally in about 40 seconds.
 
 It was long recorded here as "not installed", which was wrong: winget puts Inno Setup under
@@ -379,8 +385,13 @@ Rules that must not be relaxed:
   siblings), HTTPS only. The updater fetches and then *executes* a file, so the destination is never
   taken on trust from the API response. The self-test proves lookalike domains, plain HTTP and
   `file://` are all rejected.
-- **The downloaded size is checked** against the asset's declared size before the file is run; a
-  partial download is deleted rather than executed.
+- **Automatic installation requires GitHub's `sha256:<64 hex>` asset digest.** Releases without a
+  valid digest may still be announced, but the updater opens the release page instead of executing
+  the asset. The downloaded size and SHA-256 are checked before the `.part` file is renamed.
+- **The installer filename must be a plain safe filename**, never a path. Immediately before launch,
+  the updater hashes the completed file a second time and keeps a read handle open across
+  `Process.Start`, preventing a local replacement between verification and execution. A partial,
+  mismatched or post-download-modified file is deleted or rejected rather than run.
 - Prereleases are skipped. A release with no `*setup*.exe` asset opens the release page instead.
 - `HttpClient` is `Lazy` — not just tidiness. It was originally an eager static initialiser declared
   *before* `CurrentVersion`, read a null version, and threw `TypeInitializationException`. Static
@@ -407,8 +418,9 @@ checks the directive, because the C# side would otherwise pass all its own tests
 nothing. (This also explains the earlier silent install: the `/ALLUSERS` passed by hand was almost
 certainly ignored, and the install reached HKLM because the process was already elevated.)
 
-`LaunchInstaller` now also returns the started `Process`, throws `FileNotFoundException` for a
-missing file, and converts a declined UAC prompt (`Win32Exception` 1223) into
+`LaunchInstaller` now also requires the expected digest, returns the started `Process`, throws
+`FileNotFoundException` for a missing file, and converts a declined UAC prompt (`Win32Exception`
+1223) into
 `OperationCanceledException` — which `MainWindow` catches separately so the window is **not** closed
 out from under a user who said no. `Close()` only happens after the launch has actually succeeded.
 
@@ -427,15 +439,17 @@ per-user install in a non-default folder so nothing on this machine was at risk:
    still respected the mode it was told.
 
 What that leaves untested is only `Process.Start` handing those arguments over from a live Ctrl+U,
-and the argument construction itself is covered by the suite. The unknowable part is closed.
+and the argument construction, digest recheck and launch-time replacement rejection are covered by
+the suite. The unknowable part is closed.
 
-**Releasing:** push a tag and `.github/workflows/release.yml` does the rest — it stamps the version
-into the csproj (so the shipped binary reports the same number the updater compares), runs the full
-self-test *and* the assembly-load check, builds the portable zip and the installer, and attaches
-both to the release.
+**Releasing:** push a tag and `.github/workflows/release.yml` does the rest — it passes the tag's
+version explicitly to the tests and both packaging scripts, runs the full self-test *and* the
+assembly-load check, builds the portable zip and installer, creates a draft release, uploads both
+assets, and publishes only after the assets are present. Repository immutable releases are enabled,
+so this draft-upload-publish order is mandatory for all future releases.
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.2.1 && git push origin v0.2.1
 ```
 
 The workflow ran clean on its first attempt for v0.1.0 (2m19s), including the Chocolatey install of
@@ -452,6 +466,20 @@ dotnet run --project tests/ImageViewer.SelfTest -p:Version=0.0.1 -- --check-upda
 
 Kept out of the normal suite deliberately: a test that fails when the network drops is worse than no
 test. Note that running it writes the throttle timestamp, so the app will skip its next daily check.
+
+### Repository security settings
+
+- GitHub Dependabot alerts and security updates are enabled. `.github/dependabot.yml` checks NuGet
+  and Actions weekly; ImageSharp major upgrades remain explicitly held because 3.x introduced a
+  licensing decision rather than a routine package update.
+- CodeQL default setup scans C# weekly and on relevant pushes/PRs with the extended query suite.
+  Its threat model is `remote`: local file paths and user-launched local commands are core desktop
+  app inputs, and treating every local input as hostile produced 87 non-actionable path alerts.
+- GitHub immutable releases are enabled for future releases. Existing v0.2.0 predates that setting
+  and remains mutable, so replace it as latest rather than claiming it was retroactively protected.
+- There is no Authenticode certificate or signing secret in the repository. Do not fabricate a
+  self-signed publisher identity; the current executable-integrity chain is GitHub's release asset
+  digest, updater SHA-256 verification and release immutability.
 
 ---
 
@@ -582,6 +610,22 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-08-25 — updater integrity, single-source versioning and repository hardening
+
+- Hardened automatic installation from a host-and-size check to a GitHub SHA-256 requirement, safe
+  installer names, post-download hashing and a second launch-time hash under a read lock. Added
+  explicit regression coverage for malformed digests, hash mismatches and installer replacement.
+- Removed release-time source editing. Source, portable publish and Inno Setup now share one strict
+  version resolver; the local v0.2.1 installer reports 0.2.1 and contains no PDBs.
+- Changed release publication to draft, upload, then publish so immutable releases can be enforced.
+  Enabled repository immutable releases, Dependabot alerts/security updates and CodeQL default
+  setup. CodeQL's successful remote-threat-model scan has zero open alerts; Dependabot has zero
+  current alerts.
+- Guarded Release validation passed all **238/238** self-checks, the separate 48-decode assembly
+  check, and a live v0.2.0 API download whose 61,308,793-byte installer matched GitHub's SHA-256
+  digest and PE header. The local v0.2.1 installer is 61,328,368 bytes with SHA-256
+  `50b55d33cd7b248efe94116d9a453643d4326da95a819c125acd4443ddd53af1`.
 
 ### 2026-08-21 — HEIC codec confirmed, uninstall wizard exercised
 
