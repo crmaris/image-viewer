@@ -33,6 +33,7 @@ Format is detected from the file's **bytes**, not its extension — a PNG named 
 | Home / End | First / last |
 | **Ctrl + wheel** | Zoom at cursor |
 | Left-drag | Pan |
+| Right-click image | Rotate left/right or save rotation |
 | Ctrl+← / Ctrl+→ | Rotate 90° |
 | H / V | Flip horizontal / vertical |
 | Ctrl+S | Save rotation (lossless for JPEG) |
