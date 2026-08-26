@@ -6,8 +6,8 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.2 in source and packaging; 0.2.1 remains released and installed all-users at
-  `C:\Program Files\Image Viewer`, with the CLI on the machine PATH.
+- **Version:** 0.2.2, released and installed all-users at `C:\Program Files\Image Viewer`, with
+  the CLI on the machine PATH.
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
@@ -624,8 +624,18 @@ system load before trusting any startup number**, and re-measure when the machin
   each newly opened image.
 - Guarded Release validation passed all **241/241** self-checks and the separate 48-decode assembly
   invariant. Live visual QA confirmed both rotation and the disabled/enabled save states without
-  writing the sample image. Version 0.2.2 is prepared in source and packaging; publication and
-  installed-app verification are pending.
+  writing the sample image.
+- PR #6 passed full CI and CodeQL, then merged as
+  `188b12577712478118c861ece2c180f2ba7984df`. Release workflow **32953530802** published v0.2.2
+  successfully in 2m28s; GitHub reports it as the latest immutable release with exactly two assets.
+  The 61,311,708-byte installer digest is
+  `sha256:6ad1643fc9dfaed7c33cccc973044e16ae7e24852285192cbb6c37526af6fac6`, and the
+  84,184,440-byte portable zip digest is
+  `sha256:11b92f87432396926e7026694fd23ae6951ae0048530fd298fa32bcc4ea86037`.
+- The exact hash-verified published installer upgraded the all-users installation with exit code 0.
+  The binary ProductVersion and single HKLM uninstall entry report 0.2.2, there is no HKCU
+  duplicate, the one machine PATH entry still resolves `imageviewer` to Program Files, and no app
+  process was left running.
 
 ### 2026-08-25 — updater integrity, single-source versioning and repository hardening
 
