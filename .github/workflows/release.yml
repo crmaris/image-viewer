@@ -7,7 +7,7 @@
 # error - the updater falls back to opening the release page in a browser.
 #
 # Trigger by pushing a version tag:
-#   git tag v0.2.1 && git push origin v0.2.1
+#   git tag v0.2.2 && git push origin v0.2.2
 #
 # The tag is the source of truth for the version: it is passed explicitly into every build, so the
 # running app reports the same number the updater compares against without modifying tracked files.
@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build, without the leading v (e.g. 0.2.1)'
+        description: 'Version to build, without the leading v (e.g. 0.2.2)'
         required: true
 
 permissions:

@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO;
+using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ImageMagick;
@@ -27,6 +29,7 @@ internal static class FeatureChecks
     public static void Run(CheckFn check, Action<string> section)
     {
         RunSettingsChecks(check, section);
+        RunRotationMenuChecks(check, section);
         RunColorChecks(check, section);
         RunOpenWithChecks(check, section);
         RunInstallerLaunchChecks(check, section);
@@ -111,6 +114,41 @@ internal static class FeatureChecks
         check("loading settings costs well under a millisecond",
             perLoad < 1.0, $"{perLoad:F3} ms per load");
         Console.WriteLine($"    settings load: {perLoad:F3} ms");
+    }
+
+    // ----------------------------------------------------------- rotation menu
+
+    private static void RunRotationMenuChecks(CheckFn check, Action<string> section)
+    {
+        section("Rotation context menu");
+
+        var leftCalls = 0;
+        var rightCalls = 0;
+        var saveCalls = 0;
+        var (menu, saveItem) = MainWindow.CreateRotationContextMenu(
+            () => leftCalls++, () => rightCalls++, () => saveCalls++);
+
+        var left = menu.Items[0] as MenuItem;
+        var right = menu.Items[1] as MenuItem;
+
+        check("right-click menu presents both rotation directions and save",
+            menu.Items.Count == 4 && menu.Items[2] is Separator &&
+            left?.Header as string == "Rotate left 90°" &&
+            right?.Header as string == "Rotate right 90°" &&
+            saveItem.Header as string == "Save rotation");
+
+        check("right-click menu shows the existing keyboard shortcuts",
+            left?.InputGestureText == "Ctrl+←" &&
+            right?.InputGestureText == "Ctrl+→" &&
+            saveItem.InputGestureText == "Ctrl+S");
+
+        left?.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        right?.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        saveItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+
+        check("right-click menu items invoke their rotation and save actions",
+            leftCalls == 1 && rightCalls == 1 && saveCalls == 1,
+            $"left={leftCalls} right={rightCalls} save={saveCalls}");
     }
 
     /// <summary>Walks up from the test binary to find a file in the repository.</summary>

@@ -6,8 +6,8 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.1, released and installed all-users at `C:\Program Files\Image Viewer`, with the
-  CLI on the machine PATH.
+- **Version:** 0.2.2 in source and packaging; 0.2.1 remains released and installed all-users at
+  `C:\Program Files\Image Viewer`, with the CLI on the machine PATH.
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
@@ -308,6 +308,7 @@ Startup instrumentation is built in and costs nothing unless enabled: set
 | Home / End | First / last |
 | **Ctrl + wheel** | Zoom at cursor |
 | Left-drag | Pan |
+| Right-click image | Rotate left/right or save rotation |
 | Ctrl+← / Ctrl+→ | Rotate 90° CCW / CW |
 | H / V | Flip horizontal / vertical |
 | Ctrl+S / Ctrl+Shift+S | Save (lossless) / save re-encoded |
@@ -320,6 +321,8 @@ Startup instrumentation is built in and costs nothing unless enabled: set
 | Esc | Stop slideshow, else leave fullscreen, else close |
 
 Wheel navigates rather than zooms, as requested; zoom is on Ctrl+wheel.
+The rotation context menu is built only on first right-click, so its text resources stay off the
+cold-start path and it occupies no permanent screen space.
 
 ---
 
@@ -449,7 +452,7 @@ assets, and publishes only after the assets are present. Repository immutable re
 so this draft-upload-publish order is mandatory for all future releases.
 
 ```bash
-git tag v0.2.1 && git push origin v0.2.1
+git tag v0.2.2 && git push origin v0.2.2
 ```
 
 The workflow ran clean on its first attempt for v0.1.0 (2m19s), including the Chocolatey install of
@@ -610,6 +613,19 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-08-26 — on-demand rotation menu
+
+- Added a right-click image menu with **Rotate left 90°**, **Rotate right 90°**, and
+  **Save rotation**. The save command stays disabled until a rotation or flip is pending, and all
+  three commands route through the existing keyboard-command paths.
+- The menu is created lazily on the first right-click, so there is no recurring hint, startup
+  allocation, or permanent UI. The owner explicitly chose this presentation over a hint shown for
+  each newly opened image.
+- Guarded Release validation passed all **241/241** self-checks and the separate 48-decode assembly
+  invariant. Live visual QA confirmed both rotation and the disabled/enabled save states without
+  writing the sample image. Version 0.2.2 is prepared in source and packaging; publication and
+  installed-app verification are pending.
 
 ### 2026-08-25 — updater integrity, single-source versioning and repository hardening
 

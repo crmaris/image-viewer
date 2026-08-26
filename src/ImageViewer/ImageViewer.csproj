@@ -27,7 +27,7 @@
     <!-- NOT InvariantGlobalization: filenames here are routinely Greek, and dropping
          ICU would break culture-aware comparison and casing on those paths. -->
 
-    <Version>0.2.1</Version>
+    <Version>0.2.2</Version>
     <Product>Image Viewer</Product>
     <Company>Aris Mpitziopoulos</Company>
     <Copyright>Copyright © 2026</Copyright>

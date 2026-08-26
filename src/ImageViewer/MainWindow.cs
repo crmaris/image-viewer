@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -111,6 +112,8 @@ public sealed class MainWindow : Window
     private InfoOverlay? _info;
     private Toast? _toast;
     private Filmstrip? _filmstrip;
+    private ContextMenu? _rotationMenu;
+    private MenuItem? _saveRotationMenuItem;
     private bool _infoVisible;
 
     /// <summary>Advances the slideshow; null unless one is running.</summary>
@@ -189,6 +192,7 @@ public sealed class MainWindow : Window
         MouseWheel += OnMouseWheel;
         MouseLeftButtonDown += OnMouseLeftButtonDown;
         MouseLeftButtonUp += OnMouseLeftButtonUp;
+        MouseRightButtonUp += OnMouseRightButtonUp;
         MouseMove += OnMouseMove;
         MouseDoubleClick += (_, _) => ToggleFullscreen();
     }
@@ -1318,6 +1322,64 @@ public sealed class MainWindow : Window
         }
 
         e.Handled = true;
+    }
+
+    private void OnMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_current is null) return;
+
+        // Menus create text and font resources, so build this only after the user asks for it.
+        // Keeping it out of the constructor preserves the measured cold-start path.
+        if (_rotationMenu is null)
+        {
+            (_rotationMenu, _saveRotationMenuItem) = CreateRotationContextMenu(
+                () => RotateView(-90),
+                () => RotateView(+90),
+                () => SaveEdits(forceReEncode: false));
+        }
+
+        _saveRotationMenuItem!.IsEnabled = _view.HasUnsavedEdit;
+        _rotationMenu.PlacementTarget = _root;
+        _rotationMenu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    /// <summary>Builds the image menu on first right-click, never during startup.</summary>
+    internal static (ContextMenu Menu, MenuItem SaveItem) CreateRotationContextMenu(
+        Action rotateLeft, Action rotateRight, Action save)
+    {
+        ArgumentNullException.ThrowIfNull(rotateLeft);
+        ArgumentNullException.ThrowIfNull(rotateRight);
+        ArgumentNullException.ThrowIfNull(save);
+
+        var left = new MenuItem
+        {
+            Header = "Rotate left 90°",
+            InputGestureText = "Ctrl+←",
+        };
+        left.Click += (_, _) => rotateLeft();
+
+        var right = new MenuItem
+        {
+            Header = "Rotate right 90°",
+            InputGestureText = "Ctrl+→",
+        };
+        right.Click += (_, _) => rotateRight();
+
+        var saveItem = new MenuItem
+        {
+            Header = "Save rotation",
+            InputGestureText = "Ctrl+S",
+        };
+        saveItem.Click += (_, _) => save();
+
+        var menu = new ContextMenu { Placement = PlacementMode.MousePoint };
+        menu.Items.Add(left);
+        menu.Items.Add(right);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(saveItem);
+
+        return (menu, saveItem);
     }
 
     private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
