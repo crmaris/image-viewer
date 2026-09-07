@@ -64,7 +64,7 @@
     <!-- Tier 4: last-resort catch-all - PSD, XCF, EXR, JP2 and a few hundred more.
          Q8 rather than Q16: half the memory per pixel and faster, and 8 bits per channel is all a
          screen can show anyway. -->
-    <PackageReference Include="Magick.NET-Q8-x64" Version="14.16.0" />
+    <PackageReference Include="Magick.NET-Q8-x64" Version="14.17.1" />
   </ItemGroup>
 
   <!--
