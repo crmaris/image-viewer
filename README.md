@@ -26,6 +26,11 @@ Format is detected from the file's **bytes**, not its extension — a PNG named 
 
 ## Controls
 
+After rotating or flipping an image, click **Save rotation** at the top right, or press
+**Ctrl+S**, to save the change to the original file. The button disappears after a successful
+save; if writing fails, your edit stays visible so you can retry. In-place saving supports
+JPEG, PNG, BMP and TIFF. JPEG rotation preserves the original compressed image data.
+
 | Input | Action |
 |---|---|
 | **Space** / → / PgDn / **wheel down** | Next image |
