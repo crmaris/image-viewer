@@ -6,8 +6,8 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.3 built locally and installed all-users at `C:\Program Files\Image Viewer`;
-  public release remains 0.2.2 while the authorized GitHub-hosted publication runs.
+- **Version:** 0.2.3 released publicly; the locally built 0.2.3 is installed all-users at
+  `C:\Program Files\Image Viewer`.
   The CLI remains on the machine PATH.
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
@@ -618,6 +618,23 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-09-14 — v0.2.3 publication verified
+
+- Owner authorized GitHub-hosted checks/publication. PR #10 passed CI and CodeQL and merged as
+  `49d033dd0195a135bbd4513334ff5dff8e331704`; `v0.2.3` points to that commit on remote main.
+  The feature branch was deleted after checking its tree matched the merged tree. Prior owner
+  documentation commits remain on local main and were not included in the release.
+- Main CI `34784202762`, main security checks, and Release `34784206814` all succeeded.
+  The release workflow reran tests and the assembly invariant, built both packages, and published
+  them together. Public release: <https://github.com/crmaris/image-viewer/releases/tag/v0.2.3>.
+- Downloaded and SHA-256 verified the published installer at
+  `build/release-verification/v0.2.3/ImageViewer-0.2.3-setup.exe` (61,339,745 bytes):
+  `A47E32EC2DDA9B659600E8F9F629E145A46AF97BBCE09C2729055BFD00E8E337`.
+  Portable asset: 84,259,921 bytes; GitHub-reported SHA-256
+  `E6127E16C0B9B2715F5FBCDC7042017E25BD7E5C94945917661189DC0F9CD61D`.
+  The installed copy remains the locally tested build recorded below; it was not reinstalled
+  from the hosted artifact. Removed this publication session's temporary PR body and watch logs.
 
 ### 2026-09-14 — visible save rotation, installed locally
 
