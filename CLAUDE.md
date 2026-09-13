@@ -6,8 +6,9 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.2, released and installed all-users at `C:\Program Files\Image Viewer`, with
-  the CLI on the machine PATH.
+- **Version:** 0.2.3 built locally and installed all-users at `C:\Program Files\Image Viewer`;
+  public release remains 0.2.2 while the authorized GitHub-hosted publication runs.
+  The CLI remains on the machine PATH.
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
@@ -50,7 +51,7 @@ development fallback.
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-238 checks currently pass. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
+249 checks currently pass. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
 58.5 MB installer locally in about 40 seconds.
 
 It was long recorded here as "not installed", which was wrong: winget puts Inno Setup under
@@ -214,7 +215,11 @@ toggles, and which executable path the "Open with" registration was last written
 
 ## Rotate and save — read before changing
 
-`Ctrl+S` writes the on-screen rotation/flip back to the file.
+`Ctrl+S` writes the on-screen rotation/flip back to the file. A **Save rotation** button also
+appears at the top right after an edit. It is created lazily, so it costs nothing on startup.
+During a save, controls, navigation and closing are guarded until the write and reload finish.
+This prevents duplicate rotations and stale completions clearing another image's edits.
+Failed writes keep the edit and re-enable the button for retry.
 
 **`JpegBitmapEncoder.Rotation` is NOT lossless**, despite its widespread reputation as a block
 transform. Measured 2026-08-14: rotating a JPEG through a full turn changed **301,079 of 3,145,728
@@ -613,6 +618,28 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-09-14 — visible save rotation, installed locally
+
+- Added a lazy top-right **Save rotation** button after rotation/flips; it shows **Saving…**
+  during the operation, hides on success and stays available after failure. Ctrl+S and the
+  context menu use the same guarded save path. JPEG saving remains lossless EXIF editing.
+- Guarded duplicate saves, further edits, navigation (including slideshow/pipe handoff), and
+  window closing while saving. The PNG round-trip checks exercise the real window action,
+  duplicate-save rejection, failed writes and retry without touching the user's images/settings.
+- Validation: guarded Release build, **249 passed / 0 failed**, fresh-process assembly check
+  (48 everyday decodes; no heavy decoder assemblies), guarded self-contained R2R publish.
+- Installer: `build/ImageViewer-0.2.3-setup.exe`, 61,335,821 bytes; SHA-256
+  `F4C7FBB5E20FD87A855FE6FE4C4CD87AC92383AF22C4228AF04A147E8FEB266C`.
+  Real all-users upgrade returned 0, no restart; installed EXE reports 0.2.3 and the installed
+  DLL hash matches the packaged publish output. Kept the installer; removed this session's
+  publish scratch and temporary logs.
+- Owner explicitly authorized the existing GitHub-hosted checks and publication with "go"
+  after the permission question. The repository has **zero registered runners**;
+  existing CI/release workflows use `windows-latest` and are unchanged.
+  The canonical desktop CI handover was absent, including from the Recycle Bin. No CI or runner
+  settings were changed. The feature branch starts at remote main `d6646ba`; two prior owner
+  documentation commits remain preserved on local main and are excluded from this feature.
 
 ### 2026-08-26 — on-demand rotation menu
 

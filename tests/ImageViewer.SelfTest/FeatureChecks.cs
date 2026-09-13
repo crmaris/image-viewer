@@ -30,6 +30,7 @@ internal static class FeatureChecks
     {
         RunSettingsChecks(check, section);
         RunRotationMenuChecks(check, section);
+        RunRotationSaveChecks(check, section);
         RunColorChecks(check, section);
         RunOpenWithChecks(check, section);
         RunInstallerLaunchChecks(check, section);
@@ -149,6 +150,81 @@ internal static class FeatureChecks
         check("right-click menu items invoke their rotation and save actions",
             leftCalls == 1 && rightCalls == 1 && saveCalls == 1,
             $"left={leftCalls} right={rightCalls} save={saveCalls}");
+    }
+
+    private static void RunRotationSaveChecks(CheckFn check, Action<string> section)
+    {
+        section("Visible rotation save / real file round-trip");
+        var root = Path.GetDirectoryName(FindRepoFile("CLAUDE.md"))!;
+        var folder = Path.Combine(root, ".codex-tmp", "rotation-save-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "rotation.png");
+        var bitmap = BitmapSource.Create(3, 2, 96, 96, PixelFormats.Rgb24, null,
+            new byte[] { 255,0,0, 0,255,0, 0,0,255, 255,255,0, 0,255,255, 255,0,255 }, 9);
+        bitmap.Freeze();
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var stream = File.Create(path)) encoder.Save(stream);
+
+        var previousContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(
+            new System.Windows.Threading.DispatcherSynchronizationContext());
+        var window = new MainWindow();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic;
+        object? Field(string name) => typeof(MainWindow).GetField(name, flags)!.GetValue(window);
+        void Set(string name, object value) => typeof(MainWindow).GetField(name, flags)!.SetValue(window, value);
+        void Call(string name, params object[] args) => typeof(MainWindow).GetMethod(name, flags)!.Invoke(window, args);
+        void WaitForSave()
+        {
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            var elapsed = Stopwatch.StartNew();
+            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
+            timer.Tick += (_, _) => { if (!(bool)Field("_isSaving")! || elapsed.Elapsed.TotalSeconds > 15) frame.Continue = false; };
+            timer.Start();
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+            timer.Stop();
+            if ((bool)Field("_isSaving")!) throw new TimeoutException("Rotation save did not finish.");
+        }
+        try
+        {
+            check("save button costs no controls on startup", Field("_saveRotationButton") is null);
+            Set("_currentPath", path);
+            Set("_current", new DecodedImage { Bitmap = bitmap, PixelWidth = 3, PixelHeight = 2,
+                Path = path, DecoderName = "WIC" });
+            Call("RotateView", 90);
+            var button = (Button)Field("_saveRotationButton")!;
+            check("rotation exposes a visible save action", button.Visibility == Visibility.Visible && button.IsEnabled);
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            check("saving reports progress and rejects duplicate saves", (bool)Field("_isSaving")! && !button.IsEnabled);
+            Call("SaveEdits", false);
+            Call("RotateView", 90);
+            window.Open(Path.Combine(folder, "other.png"));
+            check("saving keeps the target image stable", (string)Field("_currentPath")! == path);
+            WaitForSave();
+            using (var stream = File.OpenRead(path))
+            {
+                var saved = BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames[0];
+                check("saved PNG reopens rotated exactly once", saved.PixelWidth == 2 && saved.PixelHeight == 3);
+            }
+            check("successful save hides the button", button.Visibility == Visibility.Collapsed);
+            Call("RotateView", 90);
+            File.SetAttributes(path, FileAttributes.ReadOnly);
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            WaitForSave();
+            check("failed save preserves edits and permits retry", button.Visibility == Visibility.Visible && button.IsEnabled);
+            File.SetAttributes(path, FileAttributes.Normal);
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            WaitForSave();
+            check("retry completes and clears unsaved state", button.Visibility == Visibility.Collapsed);
+        }
+        finally
+        {
+            (Field("_pipeline") as IDisposable)?.Dispose();
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+            File.SetAttributes(path, FileAttributes.Normal);
+            Directory.Delete(folder, true);
+        }
     }
 
     /// <summary>Walks up from the test binary to find a file in the repository.</summary>

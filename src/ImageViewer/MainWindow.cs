@@ -114,6 +114,8 @@ public sealed class MainWindow : Window
     private Filmstrip? _filmstrip;
     private ContextMenu? _rotationMenu;
     private MenuItem? _saveRotationMenuItem;
+    private Button? _saveRotationButton;
+    private bool _isSaving;
     private bool _infoVisible;
 
     /// <summary>Advances the slideshow; null unless one is running.</summary>
@@ -184,7 +186,7 @@ public sealed class MainWindow : Window
         SizeChanged += OnSizeChanged;
         DpiChanged += (_, _) => UpdateLayoutMatrix(recomputeFit: true);
         // Closing, not Closed: RestoreBounds is only meaningful while the window still exists.
-        Closing += (_, _) => SaveSettings();
+        Closing += (_, e) => { if (_isSaving) e.Cancel = true; else SaveSettings(); };
         Closed += (_, _) => { StopAnimation(); _pipeline.Dispose(); };
         ContentRendered += OnContentRendered;
 
@@ -397,6 +399,7 @@ public sealed class MainWindow : Window
     /// </summary>
     public async void Open(string path)
     {
+        if (_isSaving) return;
         try
         {
             if (Directory.Exists(path))
@@ -488,6 +491,7 @@ public sealed class MainWindow : Window
     /// </remarks>
     private void RequestShow(string path, bool immediate)
     {
+        if (_isSaving) return;
         _currentPath = path;
 
         // Tier 1: already decoded. Painting synchronously here is what keeps navigation inside a
@@ -768,6 +772,7 @@ public sealed class MainWindow : Window
 
     private void UpdateTitle()
     {
+        UpdateSaveButton();
         if (_currentPath is null)
         {
             Title = "Image Viewer";
@@ -793,6 +798,7 @@ public sealed class MainWindow : Window
 
     private void Navigate(int delta)
     {
+        if (_isSaving) return;
         if (_files.Length == 0 || delta == 0) return;
 
         // Wrapping means a wheel spin never dead-ends at the folder boundary.
@@ -806,6 +812,7 @@ public sealed class MainWindow : Window
 
     private void GoTo(int index)
     {
+        if (_isSaving) return;
         if (_files.Length == 0) return;
         var clamped = Math.Clamp(index, 0, _files.Length - 1);
         if (clamped == _index) return;
@@ -818,6 +825,7 @@ public sealed class MainWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
+        if (_isSaving) { e.Handled = true; return; }
         var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
 
         switch (e.Key)
@@ -849,11 +857,13 @@ public sealed class MainWindow : Window
             case Key.H:
                 _view.ToggleFlipHorizontal();
                 UpdateLayoutMatrix(recomputeFit: true);
+                UpdateTitle();
                 break;
 
             case Key.V:
                 _view.ToggleFlipVertical();
                 UpdateLayoutMatrix(recomputeFit: true);
+                UpdateTitle();
                 break;
 
             case Key.D0 or Key.NumPad0:
@@ -943,7 +953,7 @@ public sealed class MainWindow : Window
     /// <summary>Writes the on-screen rotation and flips back to the file.</summary>
     private async void SaveEdits(bool forceReEncode)
     {
-        if (_currentPath is null || _current is null) return;
+        if (_isSaving || _isLoading || _currentPath is null || _current is null) return;
 
         if (!_view.HasUnsavedEdit)
         {
@@ -956,6 +966,11 @@ public sealed class MainWindow : Window
         var flipV = _view.FlipVertical;
         var rotation = _view.RotationDegrees;
 
+        // Hold this view steady until the write and reload finish. This also prevents a
+        // second save composing the same rotation onto the already-updated file.
+        _isSaving = true;
+        _root.IsEnabled = false;
+        UpdateSaveButton();
         try
         {
             var result = await Task.Run(() => ImageSaver.Save(
@@ -980,6 +995,40 @@ public sealed class MainWindow : Window
         catch (Exception ex)
         {
             ShowToast(ex.Message, isError: true);
+        }
+        finally
+        {
+            _isSaving = false;
+            _root.IsEnabled = true;
+            UpdateSaveButton();
+        }
+    }
+
+    private void UpdateSaveButton()
+    {
+        var visible = _isSaving || (_current is not null && !_isLoading && _view.HasUnsavedEdit);
+        if (_saveRotationButton is null && visible)
+        {
+            _saveRotationButton = new Button
+            {
+                Content = "Save rotation",
+                ToolTip = "Save rotation and flips to this file (Ctrl+S)",
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(12),
+                Padding = new Thickness(16, 9, 16, 9),
+                FontSize = 14,
+                Focusable = false,
+            };
+            _saveRotationButton.Click += (_, e) => { e.Handled = true; SaveEdits(false); };
+            Panel.SetZIndex(_saveRotationButton, 100);
+            _root.Children.Add(_saveRotationButton);
+        }
+        if (_saveRotationButton is not null)
+        {
+            _saveRotationButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            _saveRotationButton.Content = _isSaving ? "Saving…" : "Save rotation";
+            _saveRotationButton.IsEnabled = !_isSaving;
         }
     }
 
@@ -1338,7 +1387,7 @@ public sealed class MainWindow : Window
                 () => SaveEdits(forceReEncode: false));
         }
 
-        _saveRotationMenuItem!.IsEnabled = _view.HasUnsavedEdit;
+        _saveRotationMenuItem!.IsEnabled = !_isSaving && !_isLoading && _view.HasUnsavedEdit;
         _rotationMenu.PlacementTarget = _root;
         _rotationMenu.IsOpen = true;
         e.Handled = true;
@@ -1432,7 +1481,7 @@ public sealed class MainWindow : Window
 
     private void RotateView(int degrees)
     {
-        if (_current is null) return;
+        if (_isSaving || _current is null) return;
 
         _view.Rotate(degrees);
         UpdateLayoutMatrix(recomputeFit: true);
