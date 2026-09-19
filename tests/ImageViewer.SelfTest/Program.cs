@@ -47,6 +47,12 @@ public static class Program
             return 0;
         }
 
+        if (mode == "--zoom-check")
+        {
+            ZoomChecks.Run(Check, dir, Path.Combine(Directory.GetCurrentDirectory(), ".codex-tmp", "zoom-evidence"));
+            return _failed == 0 ? 0 : 1;
+        }
+
         if (!Directory.Exists(dir))
         {
             Console.Error.WriteLine($"Test image folder not found: {dir}");
@@ -62,6 +68,7 @@ public static class Program
 
         RunCorrectnessChecks(dir);
         RunViewTransformChecks(dir);
+        ZoomChecks.Run(Check);
         RunDecoderChainChecks(dir);
         RunOrientationChecks();
         RunSaveChecks(dir);
