@@ -31,7 +31,8 @@ public sealed record ExifSummary
     {
         try
         {
-            using var stream = File.OpenRead(path);
+            using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             var decoder = BitmapDecoder.Create(
                 stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
 

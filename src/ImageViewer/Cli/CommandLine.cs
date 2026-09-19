@@ -190,6 +190,7 @@ internal static class CommandLine
 
               --json        emit one JSON object per file
               --quiet       dimensions only, as WIDTHxHEIGHT
+              --recursive   descend into subfolders when given a folder
 
             Decoding is done at a small target size, so this stays fast on large photographs; the
             dimensions reported are always the file's own, never the downscaled ones.
@@ -203,6 +204,7 @@ internal static class CommandLine
             enough to run over a whole library.
 
               --mismatched-only   list only files whose extension disagrees with their content
+              --recursive         descend into subfolders when given a folder
             """,
 
         "list" => """
@@ -214,6 +216,7 @@ internal static class CommandLine
               --names       file names only, without the folder
               --count       print just the number of images
               --absolute    full paths (the default when a folder is given)
+              --recursive   include subfolders
             """,
 
         "formats" => """
@@ -237,6 +240,8 @@ internal static class CommandLine
               --out-dir D   write into D, keeping each input's base name
               --format EXT  target extension when using --out-dir
               --overwrite   replace an existing output file
+              --recursive   descend into subfolders when given a folder
+              --jobs N      convert N files at once (default 1)
 
             Transparency is composited onto white when the target cannot carry alpha.
             """,
@@ -256,6 +261,8 @@ internal static class CommandLine
               --allow-upscale
                             permit output larger than the source
               --overwrite   replace an existing output file
+              --recursive   descend into subfolders when given a folder
+              --jobs N      convert N files at once (default 1)
 
             The resize happens during decoding, so a 24 MP photograph is never fully decoded just
             to be thrown away.
@@ -274,6 +281,8 @@ internal static class CommandLine
               --embedded    use the file's own embedded preview when it has one, which is
                             roughly thirty times faster but limited to its stored size
               --overwrite   replace an existing output file
+              --recursive   descend into subfolders when given a folder
+              --jobs N      convert N files at once (default 1)
             """,
 
         "rotate" => """
@@ -288,6 +297,7 @@ internal static class CommandLine
               --180         half turn
               --re-encode   physically rotate the pixels instead of setting the tag. Lossy for
                             JPEG; only needed for software that ignores EXIF orientation.
+              --recursive   descend into subfolders when given a folder
             """,
 
         "flip" => """
@@ -298,6 +308,7 @@ internal static class CommandLine
               --horizontal  mirror left to right
               --vertical    mirror top to bottom
               --re-encode   physically mirror the pixels instead of setting the tag
+              --recursive   descend into subfolders when given a folder
             """,
 
         _ => GeneralHelp,

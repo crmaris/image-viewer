@@ -88,10 +88,12 @@
     SkiaSharp and HarfBuzz ship debug symbols for their native libraries and the SDK copies them
     into the publish folder: 84 MB for libSkiaSharp.pdb and 22 MB for libHarfBuzzSharp.pdb. They are
     dead weight in a release package - a third of the download for files never read at runtime.
+    Scoped to the native symbols only so the application's own PDB survives for crash-line diagnostics.
   -->
   <Target Name="RemoveNativeSymbolsFromPublish" AfterTargets="Publish">
     <ItemGroup>
-      <_UnwantedSymbols Include="$(PublishDir)**\*.pdb" />
+      <_UnwantedSymbols Include="$(PublishDir)libSkiaSharp.pdb" />
+      <_UnwantedSymbols Include="$(PublishDir)libHarfBuzzSharp.pdb" />
     </ItemGroup>
     <Delete Files="@(_UnwantedSymbols)" ContinueOnError="true" />
     <Message Importance="high" Text="Removed @(_UnwantedSymbols->Count()) symbol file(s) from the publish output." />

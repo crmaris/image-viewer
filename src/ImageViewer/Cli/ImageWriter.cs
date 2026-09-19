@@ -17,7 +17,7 @@ namespace ImageViewer.Cli;
 internal static class ImageWriter
 {
     /// <summary>Extensions WPF's own encoders cover, which is every common target.</summary>
-    private static readonly HashSet<string> NativeExtensions =
+    internal static readonly HashSet<string> NativeExtensions =
         new(StringComparer.OrdinalIgnoreCase)
         {
             ".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".bmp", ".dib",
@@ -41,7 +41,9 @@ internal static class ImageWriter
         var folder = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
 
-        var temporary = path + ".tmp";
+        // Unique per call: batch jobs with --jobs N (or same-base-name inputs like exotic.pcx
+        // and exotic.ppm mapping to one exotic.jpg) would otherwise share path.tmp and collide.
+        var temporary = $"{path}.{Guid.NewGuid():N}.tmp";
 
         try
         {

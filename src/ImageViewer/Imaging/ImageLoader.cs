@@ -24,7 +24,7 @@ public class ImageLoader
     protected static async Task<byte[]> ReadAllBytesAsync(string path, CancellationToken ct)
     {
         await using var fs = new FileStream(
-            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
+            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
             bufferSize: 1 << 16,
             options: FileOptions.SequentialScan | FileOptions.Asynchronous);
 

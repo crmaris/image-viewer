@@ -18,9 +18,13 @@ public sealed partial class FolderScanner
     /// Enumerates the supported images in <paramref name="folder"/>, sorted the way Explorer sorts.
     /// </summary>
     public static Task<string[]> ScanAsync(string folder, CancellationToken ct) =>
-        Task.Run(() => Scan(folder, ct), ct);
+        Task.Run(() => Scan(folder, ct, recursive: false), ct);
 
-    private static string[] Scan(string folder, CancellationToken ct)
+    /// <summary>Recursive variant for CLI batch work over a tree.</summary>
+    public static Task<string[]> ScanRecursiveAsync(string folder, CancellationToken ct) =>
+        Task.Run(() => Scan(folder, ct, recursive: true), ct);
+
+    private static string[] Scan(string folder, CancellationToken ct, bool recursive)
     {
         List<string> found = [];
 
@@ -28,7 +32,7 @@ public sealed partial class FolderScanner
         {
             var options = new EnumerationOptions
             {
-                RecurseSubdirectories = false,
+                RecurseSubdirectories = recursive,
                 IgnoreInaccessible = true,
                 // Hidden files are skipped, but system-flagged ones are not: network shares and
                 // some cameras mark ordinary images as system.

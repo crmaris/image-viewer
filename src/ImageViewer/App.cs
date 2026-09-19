@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -74,6 +75,22 @@ public sealed class App : Application
     {
         // A viewer that dies on one bad file is worse than one that reports it and carries on, so
         // UI-thread faults are surfaced and swallowed rather than taking the process down.
+        // The full details are also appended to error.log so a transient message box is not the
+        // only record when diagnosing a repeatable crash.
+        try
+        {
+            var folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ImageViewer");
+            Directory.CreateDirectory(folder);
+            File.AppendAllText(
+                Path.Combine(folder, "error.log"),
+                $"[{DateTimeOffset.UtcNow:O}] {e.Exception}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Logging must never make the failure worse.
+        }
+
         MessageBox.Show(
             $"{e.Exception.Message}\n\n{e.Exception.GetType().Name}",
             "Image Viewer", MessageBoxButton.OK, MessageBoxImage.Warning);

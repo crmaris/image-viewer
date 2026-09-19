@@ -83,6 +83,14 @@ public sealed class MainWindow : Window
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _scanCts;
 
+    /// <summary>Watches the current folder so external adds/deletes refresh the list.</summary>
+    private FileSystemWatcher? _folderWatcher;
+    private string? _watchedFolder;
+    private readonly DispatcherTimer _rescanDebounce;
+
+    /// <summary>When the app itself last mutated a file, so its own watcher echo can be skipped.</summary>
+    private DateTime _lastOwnWriteUtc = DateTime.MinValue;
+
     // Pan state.
     private bool _isPanning;
     private Point _panOrigin;
@@ -186,6 +194,12 @@ public sealed class MainWindow : Window
         // Constructed on the UI thread so Progress<T> captures this context and reports back on it.
         _previewSink = new Progress<DecodedImage>(OnPreviewReady);
 
+        _rescanDebounce = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(500),
+        };
+        _rescanDebounce.Tick += OnRescanDebounced;
+
         AllowDrop = true;
         Drop += OnDrop;
         DragOver += OnDragOver;
@@ -193,7 +207,7 @@ public sealed class MainWindow : Window
         DpiChanged += (_, _) => UpdateLayoutMatrix(recomputeFit: true);
         // Closing, not Closed: RestoreBounds is only meaningful while the window still exists.
         Closing += (_, e) => { if (_isSaving) e.Cancel = true; else SaveSettings(); };
-        Closed += (_, _) => { StopAnimation(); _pipeline.Dispose(); };
+        Closed += (_, _) => { StopAnimation(); _pipeline.Dispose(); _folderWatcher?.Dispose(); };
         ContentRendered += OnContentRendered;
 
         KeyDown += OnKeyDown;
@@ -203,6 +217,14 @@ public sealed class MainWindow : Window
         MouseRightButtonUp += OnMouseRightButtonUp;
         MouseMove += OnMouseMove;
         MouseDoubleClick += (_, _) => ToggleFullscreen();
+
+        // Pinch-zoom and two-finger pan on touchscreens and precision touchpads.
+        IsManipulationEnabled = true;
+        ManipulationDelta += OnManipulationDelta;
+
+        // Pasted images accumulate in the temp folder; clear out last week's on startup,
+        // off the UI thread, so a daily Ctrl+V habit does not fill the disk.
+        _ = Task.Run(CleanupStalePastes);
     }
 
     /// <summary>First frame is on screen; this is the number the startup budget is measured against.</summary>
@@ -473,6 +495,7 @@ public sealed class MainWindow : Window
                 if (_index < 0) _files = [];
             }
 
+            WatchFolder(folder);
             _filmstrip?.SetFiles(_files);
             _filmstrip?.SetCurrentIndex(_index);
             UpdateTitle();
@@ -481,6 +504,102 @@ public sealed class MainWindow : Window
         catch (OperationCanceledException)
         {
             // Superseded by a newer scan.
+        }
+    }
+
+    /// <summary>Starts watching <paramref name="folder"/> for external changes.</summary>
+    private void WatchFolder(string folder)
+    {
+        if (string.Equals(_watchedFolder, folder, StringComparison.OrdinalIgnoreCase) && _folderWatcher is not null)
+            return;
+
+        _folderWatcher?.Dispose();
+        _folderWatcher = null;
+        _watchedFolder = folder;
+
+        try
+        {
+            var watcher = new FileSystemWatcher(folder)
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.LastWrite,
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true,
+            };
+            watcher.Created += (_, _) => ScheduleRescan();
+            watcher.Deleted += (_, _) => ScheduleRescan();
+            watcher.Renamed += (_, _) => ScheduleRescan();
+            watcher.Changed += (_, _) => ScheduleRescan();
+            _folderWatcher = watcher;
+        }
+        catch
+        {
+            // Watching is a convenience; an unwatched folder still browses fine.
+            _folderWatcher = null;
+            _watchedFolder = null;
+        }
+    }
+
+    private void ScheduleRescan()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            _rescanDebounce.Stop();
+            _rescanDebounce.Start();
+        });
+    }
+
+    private void OnRescanDebounced(object? sender, EventArgs e)
+    {
+        _rescanDebounce.Stop();
+        if (_watchedFolder is null || _isSaving) return;
+        // The app's own save/delete/rename already updated the list and cache explicitly;
+        // a rescan here would be a no-op echo of our own write.
+        if (DateTime.UtcNow - _lastOwnWriteUtc < TimeSpan.FromSeconds(1.5)) return;
+        var current = _currentPath;
+        var folder = _watchedFolder;
+        _ = RescanAndRestoreAsync(folder, current);
+    }
+
+    /// <summary>Records an app-initiated file mutation so the folder watcher ignores its echo.</summary>
+    private void NoteOwnWrite() => _lastOwnWriteUtc = DateTime.UtcNow;
+
+    private async Task RescanAndRestoreAsync(string folder, string? current)
+    {
+        var before = _files;
+        await RescanFolderAsync(folder, selectPath: null).ConfigureAwait(true);
+        if (_files.Length == 0) return;
+
+        // Drop cached decodes for files that no longer exist so a deleted image can never
+        // reappear from the cache.
+        if (before.Length > 0)
+        {
+            var stillThere = new HashSet<string>(_files, StringComparer.OrdinalIgnoreCase);
+            foreach (var old in before)
+                if (!stillThere.Contains(old)) _pipeline.Invalidate(old);
+        }
+
+        if (current is not null)
+        {
+            var at = Array.FindIndex(
+                _files, f => string.Equals(f, current, StringComparison.OrdinalIgnoreCase));
+            if (at >= 0)
+            {
+                _index = at;
+                _filmstrip?.SetCurrentIndex(_index);
+                UpdateTitle();
+                RefreshInfo();
+                SchedulePrefetch();
+                return;
+            }
+
+            // Current file vanished (deleted/moved elsewhere): show whatever now sits at the
+            // same position rather than a stale "unreadable".
+            if (!File.Exists(current))
+            {
+                _index = Math.Clamp(_index, 0, _files.Length - 1);
+                RequestShow(_files[_index], immediate: true);
+                SchedulePrefetch();
+            }
         }
     }
 
@@ -755,7 +874,7 @@ public sealed class MainWindow : Window
 
     /// <summary>Shows the idle hint, for a launch with no file to open.</summary>
     public void ShowWelcome() =>
-        ShowMessage("Open an image, or drop one here.\n\nSpace or mouse wheel to browse   -   Ctrl+wheel to zoom   -   F11 fullscreen");
+        ShowMessage("Open an image, or drop one here.\n\nSpace or mouse wheel to browse   -   Ctrl+wheel to zoom   -   F11 fullscreen   -   F1 shortcuts");
 
     private TextBlock EnsureMessageBlock()
     {
@@ -860,16 +979,20 @@ public sealed class MainWindow : Window
                 RotateView(+90);
                 break;
 
-            case Key.H:
+            case Key.H when !ctrl:
                 _view.ToggleFlipHorizontal();
                 UpdateLayoutMatrix(recomputeFit: true);
                 UpdateTitle();
                 break;
 
-            case Key.V:
+            case Key.V when !ctrl:
                 _view.ToggleFlipVertical();
                 UpdateLayoutMatrix(recomputeFit: true);
                 UpdateTitle();
+                break;
+
+            case Key.V when ctrl:
+                PasteFromClipboard();
                 break;
 
             case Key.D0 or Key.NumPad0:
@@ -941,6 +1064,11 @@ public sealed class MainWindow : Window
                 AdjustSlideshowInterval(-1);
                 break;
 
+            case Key.F1:
+            case Key.OemQuestion:
+                ShowHelp();
+                break;
+
             case Key.Escape:
                 if (_slideshow is not null) ToggleSlideshow();
                 else if (_isFullscreen) ToggleFullscreen();
@@ -991,6 +1119,7 @@ public sealed class MainWindow : Window
             // The file on disk changed, so any cached decode of it is now wrong.
             _pipeline.Invalidate(path);
             _view.ResetEdits();
+            NoteOwnWrite();
 
             ShowToast(result.Description);
 
@@ -1069,6 +1198,7 @@ public sealed class MainWindow : Window
 
         _pipeline.Invalidate(path);
         ShowToast(permanent ? $"Deleted '{name}' permanently." : $"'{name}' moved to the Recycle Bin.");
+        NoteOwnWrite();
 
         RemoveCurrentFromList();
     }
@@ -1150,6 +1280,7 @@ public sealed class MainWindow : Window
             _pipeline.Invalidate(oldPath);
             _currentPath = newPath;
             if (_index >= 0 && _index < _files.Length) _files[_index] = newPath;
+            NoteOwnWrite();
 
             // Renaming can change where the file sorts, so restore the folder's natural order.
             Array.Sort(_files, FolderScanner.CompareNatural);
@@ -1164,6 +1295,130 @@ public sealed class MainWindow : Window
         {
             ShowToast(ex.Message, isError: true);
         }
+    }
+
+    /// <summary>Opens an image or file list from the clipboard (Ctrl+V).</summary>
+    private void PasteFromClipboard()
+    {
+        if (_isSaving) return;
+
+        try
+        {
+            if (Clipboard.ContainsFileDropList())
+            {
+                var files = Clipboard.GetFileDropList();
+                if (files.Count > 0 && !string.IsNullOrEmpty(files[0]))
+                {
+                    Open(files[0]!);
+                    return;
+                }
+            }
+
+            if (!Clipboard.ContainsImage())
+            {
+                ShowToast("Clipboard has no image to paste.");
+                return;
+            }
+
+            var image = Clipboard.GetImage();
+            if (image is null)
+            {
+                ShowToast("Clipboard has no image to paste.", isError: true);
+                return;
+            }
+
+            var folder = Path.Combine(Path.GetTempPath(), "ImageViewerPaste");
+            Directory.CreateDirectory(folder);
+            var temp = Path.Combine(folder, $"pasted-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+
+            var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));
+            using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.Read))
+                encoder.Save(stream);
+
+            Open(temp);
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Paste failed: {ex.Message}", isError: true);
+        }
+    }
+
+    /// <summary>Deletes pasted images older than a week from the temp folder.</summary>
+    private static void CleanupStalePastes()
+    {
+        try
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "ImageViewerPaste");
+            if (!Directory.Exists(folder)) return;
+
+            var cutoff = DateTime.UtcNow - TimeSpan.FromDays(7);
+            foreach (var file in Directory.EnumerateFiles(folder, "pasted-*.png"))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(file) < cutoff) File.Delete(file);
+                }
+                catch
+                {
+                    // A pasted image currently open elsewhere must be left alone.
+                }
+            }
+        }
+        catch
+        {
+            // Cleanup is best effort; it must never surface at startup.
+        }
+    }
+
+    /// <summary>Shows every keyboard and mouse shortcut (F1 or ?).</summary>
+    private void ShowHelp()
+    {
+        MessageBox.Show(
+            "Space / Right / PageDown / wheel down — next image\n" +
+            "Backspace / Left / PageUp / wheel up — previous image\n" +
+            "Home / End — first / last image\n" +
+            "Ctrl+wheel or pinch — zoom at cursor\n" +
+            "+ / - or 0 / 1 — zoom in / out, fit, actual size\n" +
+            "Left-drag or two-finger drag — pan\n" +
+            "Ctrl+Left / Ctrl+Right — rotate 90°\n" +
+            "H / V — flip horizontal / vertical\n" +
+            "Ctrl+S / Ctrl+Shift+S — save rotation (lossless JPEG) / re-encoded\n" +
+            "Right-click — rotate menu\n" +
+            "Delete / Shift+Delete — Recycle Bin / delete permanently\n" +
+            "Ctrl+C / Ctrl+Shift+C — copy image / copy path\n" +
+            "Ctrl+V — paste image or file from clipboard\n" +
+            "F2 — rename    E — show in Explorer\n" +
+            "I / T / S — info / filmstrip / slideshow\n" +
+            ", . during slideshow — slower / faster\n" +
+            "F11 or double-click — fullscreen\n" +
+            "Ctrl+U — install update\n" +
+            "F1 or ? — this help    Esc — stop / leave / close",
+            "Image Viewer shortcuts", MessageBoxButton.OK, MessageBoxImage.None);
+    }
+
+    /// <summary>Pinch-zoom and two-finger pan.</summary>
+    private void OnManipulationDelta(object? sender, System.Windows.Input.ManipulationDeltaEventArgs e)
+    {
+        if (_current is null) return;
+
+        BeginInteraction();
+        var anchor = e.ManipulationOrigin;
+        // ManipulationOrigin is relative to the event source; translate to viewport coordinates.
+        var relative = _root.TranslatePoint(new Point(anchor.X, anchor.Y), _root);
+        if (Math.Abs(e.DeltaManipulation.Scale.X - 1.0) > 0.001 ||
+            Math.Abs(e.DeltaManipulation.Scale.Y - 1.0) > 0.001)
+        {
+            var factor = (e.DeltaManipulation.Scale.X + e.DeltaManipulation.Scale.Y) / 2.0;
+            _view.ZoomAt(factor, new Point(relative.X, relative.Y), _current, ViewportDip, DpiScale);
+        }
+        if (e.DeltaManipulation.Translation.LengthSquared > 0)
+            _view.Pan(e.DeltaManipulation.Translation.X, e.DeltaManipulation.Translation.Y, _current, ViewportDip, DpiScale);
+        UpdateLayoutMatrix(recomputeFit: false);
+        UpdateTitle();
+        _interactionSettle.Stop();
+        _interactionSettle.Start();
+        e.Handled = true;
     }
 
     // ---------------------------------------------------------------- update
@@ -1532,7 +1787,10 @@ public sealed class MainWindow : Window
         try
         {
             var full = await _pipeline.GetAsync(path, 0, 0, ct).ConfigureAwait(true);
-            if (ct.IsCancellationRequested || _current?.Path != path) return;
+            // The user may have navigated while the full decode was running. Checking the
+            // live current path (not the stale _current object) is what prevents a late
+            // full-res A overwriting the B now on screen.
+            if (ct.IsCancellationRequested || !IsStillCurrent(path)) return;
 
             _current = full;
             _currentIsDownscaled = false;

@@ -727,6 +727,25 @@ public static class Program
 
         Check("quarter turns are reported as swapping the axes",
             new Orientation(false, 90).SwapsAxes && !new Orientation(false, 180).SwapsAxes);
+
+        // The display path (ViewTransform) records an on-screen flip against the swapped axis
+        // when quarter-turned; the save path (Orientation) composes transforms algebraically.
+        // These must agree: rotate 90 then flip on-screen horizontal must equal composing
+        // (false,90) with (true,0), which reverses the turn to (true,270).
+        var view = new ViewTransform();
+        view.Rotate(90);
+        view.ToggleFlipHorizontal();
+        var fromView = Orientation.FromUserEdits(view.FlipHorizontal, view.FlipVertical, view.RotationDegrees);
+        var composed = new Orientation(false, 90).Then(new Orientation(true, 0));
+        Check("ViewTransform flip-while-rotated matches Orientation composition",
+            fromView == composed, $"view gave {fromView}, algebra gave {composed}");
+
+        view.Reset();
+        view.Rotate(90);
+        view.ToggleFlipVertical();
+        var fromViewV = Orientation.FromUserEdits(view.FlipHorizontal, view.FlipVertical, view.RotationDegrees);
+        Check("ViewTransform vertical-flip-while-rotated stays a valid orientation",
+            fromViewV.ToExif() is >= 1 and <= 8, $"got {fromViewV}");
     }
 
     // -------------------------------------------------------------------- save

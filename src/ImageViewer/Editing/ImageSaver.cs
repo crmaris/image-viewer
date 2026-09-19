@@ -102,6 +102,11 @@ public static class ImageSaver
     }
 
     /// <summary>Decodes, transforms and re-encodes, physically rewriting the pixels.</summary>
+    /// <remarks>
+    /// Metadata is deliberately not copied: the composed transform is baked into the pixels and
+    /// the orientation tag resets to 1. Carrying the old EXIF block across would re-apply the
+    /// rotation on next open.
+    /// </remarks>
     private static SaveResult SaveReEncoded(
         byte[] bytes, string path, Orientation total, string extension, bool isJpeg, CancellationToken ct)
     {
@@ -197,11 +202,5 @@ public static class ImageSaver
         {
             return 1;
         }
-    }
-
-    private static void TrySetQuery(BitmapMetadata metadata, string query, object value)
-    {
-        try { metadata.SetQuery(query, value); }
-        catch { /* codec may not support the query; the pixels are still correct */ }
     }
 }

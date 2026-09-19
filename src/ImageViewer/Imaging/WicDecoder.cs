@@ -117,9 +117,8 @@ public static class WicDecoder
 
         var bmp = new BitmapImage();
         bmp.BeginInit();
-        bmp.StreamSource = new MemoryStream(bytes, writable: false);
-        // OnLoad completes decoding inside EndInit, so the stream can be released immediately
-        // and the file is never left locked - which matters for delete and rename.
+        // OnLoad completes decoding inside EndInit, so the stream is disposed immediately
+        // afterwards and the file is never left locked - which matters for delete and rename.
         bmp.CacheOption = BitmapCacheOption.OnLoad;
 
         // Only ever constrain ONE axis. Setting both forces an exact size and would distort
@@ -142,7 +141,11 @@ public static class WicDecoder
             }
         }
 
-        bmp.EndInit();
+        using (var decodeStream = new MemoryStream(bytes, writable: false))
+        {
+            bmp.StreamSource = decodeStream;
+            bmp.EndInit();
+        }
 
         ct.ThrowIfCancellationRequested();
 
@@ -266,9 +269,10 @@ public static class WicDecoder
     }
 
     /// <summary>
-    /// Bakes an EXIF orientation into the pixels.
+    /// Bakes an EXIF orientation into the pixels. Public for the filmstrip, which decodes
+    /// small thumbnails through its own path but must show the same orientation as the main view.
     /// </summary>
-    private static BitmapSource ApplyOrientation(BitmapSource source, int orientation)
+    public static BitmapSource ApplyOrientation(BitmapSource source, int orientation)
     {
         if (orientation is <= 1 or > 8) return source;
 

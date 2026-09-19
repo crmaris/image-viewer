@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using ImageViewer.Imaging;
 
 namespace ImageViewer.Ui;
 
@@ -127,9 +128,9 @@ public sealed class Filmstrip : Border
         var start = Math.Max(0, _list.SelectedIndex);
 
         // Work outwards from where the user is looking, so the visible part fills first.
-        var order = Enumerable.Range(0, items.Count)
-            .OrderBy(i => Math.Abs(i - start))
-            .ToArray();
+        // A simple alternating walk avoids allocating and sorting an order array, which
+        // matters for folders with tens of thousands of images.
+        var order = WalkOutward(start, items.Count);
 
         try
         {
@@ -163,7 +164,9 @@ public sealed class Filmstrip : Border
     /// <remarks>
     /// DecodePixelHeight makes the codec produce a small image directly rather than decoding a
     /// 24 MP frame and shrinking it, which is the difference between a strip that fills in
-    /// smoothly and one that pins a core for a minute.
+    /// smoothly and one that pins a core for a minute. The file is opened with ReadWrite+Delete
+    /// sharing so the strip never locks the image the user may want to delete or rename, and the
+    /// EXIF orientation is baked in so thumbnails match the main view.
     /// </remarks>
     private static BitmapSource? Generate(string path, CancellationToken ct)
     {
@@ -171,15 +174,27 @@ public sealed class Filmstrip : Border
         {
             ct.ThrowIfCancellationRequested();
 
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.UriSource = new Uri(path);
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.DecodePixelHeight = ThumbnailHeight * 2;   // 2x for high-DPI displays
-            bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
-            bitmap.EndInit();
+            var orientation = ReadOrientation(path);
+
+            BitmapImage bitmap;
+            using (var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.StreamSource = stream;
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.DecodePixelHeight = ThumbnailHeight * 2;   // 2x for high-DPI displays
+                bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
+                bitmap.EndInit();
+            }
             bitmap.Freeze();
-            return bitmap;
+
+            if (orientation is <= 1 or > 8) return bitmap;
+
+            var oriented = WicDecoder.ApplyOrientation(bitmap, orientation);
+            oriented.Freeze();
+            return oriented;
         }
         catch (OperationCanceledException) { throw; }
         catch
@@ -187,6 +202,39 @@ public sealed class Filmstrip : Border
             // A file the strip cannot thumbnail simply shows an empty slot; the main view will
             // report the real error if the user navigates to it.
             return null;
+        }
+    }
+
+    private static int ReadOrientation(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var decoder = BitmapDecoder.Create(
+                stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+            return decoder.Frames.Count > 0
+                ? WicDecoder.ReadExifOrientation(decoder.Frames[0])
+                : 1;
+        }
+        catch
+        {
+            return 1;
+        }
+    }
+
+    /// <summary>Yields indices outward from <paramref name="start"/> without allocating a sort.</summary>
+    private static IEnumerable<int> WalkOutward(int start, int count)
+    {
+        if (count <= 0) yield break;
+        var clamped = Math.Clamp(start, 0, count - 1);
+        yield return clamped;
+        for (var distance = 1; distance < count; distance++)
+        {
+            var ahead = clamped + distance;
+            if (ahead < count) yield return ahead;
+            var behind = clamped - distance;
+            if (behind >= 0) yield return behind;
         }
     }
 

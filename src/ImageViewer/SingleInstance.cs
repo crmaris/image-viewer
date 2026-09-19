@@ -47,6 +47,12 @@ public static class SingleInstance
                 // process lifetime - releasing it would let a later launch believe it is primary.
                 return false;
             }
+
+            // Not the primary: drop our handle immediately. The primary still owns the name;
+            // holding a second handle here serves nothing and leaks until this short-lived
+            // process exits.
+            _ownershipMutex?.Dispose();
+            _ownershipMutex = null;
         }
         catch
         {
@@ -68,7 +74,7 @@ public static class SingleInstance
             // owner has died without releasing it - a case measured at over a second at 800 ms.
             client.Connect(timeout: 400);
 
-            var payload = Encoding.UTF8.GetBytes(string.Join('\n', paths));
+            var payload = Encoding.UTF8.GetBytes(string.Join('\0', paths));
             client.Write(payload, 0, payload.Length);
             client.Flush();
             return true;
@@ -110,7 +116,7 @@ public static class SingleInstance
                 var text = reader.ReadToEnd();
 
                 var paths = text
-                    .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    .Split(['\0', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
                 PathsReceived?.Invoke(paths);
             }

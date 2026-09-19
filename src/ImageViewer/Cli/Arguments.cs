@@ -93,7 +93,7 @@ internal sealed class Arguments
 
     /// <summary>Flags that consume the argument after them.</summary>
     private static readonly string[] ValueTaking =
-        ["width", "height", "size", "quality", "out-dir", "format", "slideshow"];
+        ["width", "height", "size", "quality", "out-dir", "format", "slideshow", "jobs"];
 
     internal bool Has(string name) => _flags.ContainsKey(name);
 

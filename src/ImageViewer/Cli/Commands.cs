@@ -39,9 +39,9 @@ internal static class Commands
 
     internal static int Info(Arguments args)
     {
-        args.RejectUnknown("json", "quiet");
+        args.RejectUnknown("json", "quiet", "recursive");
 
-        var paths = ExpandInputs(args.RequireSome("file"));
+        var paths = ExpandInputs(args.RequireSome("file"), args.Has("recursive"));
         var json = args.Has("json");
         var quiet = args.Has("quiet");
         var failures = 0;
@@ -153,9 +153,9 @@ internal static class Commands
 
     internal static int Identify(Arguments args)
     {
-        args.RejectUnknown("mismatched-only");
+        args.RejectUnknown("mismatched-only", "recursive");
 
-        var paths = ExpandInputs(args.RequireSome("file"));
+        var paths = ExpandInputs(args.RequireSome("file"), args.Has("recursive"));
         var onlyMismatched = args.Has("mismatched-only");
         var failures = 0;
 
@@ -188,7 +188,8 @@ internal static class Commands
 
     private static byte[] ReadHeader(string path)
     {
-        using var stream = File.OpenRead(path);
+        using var stream = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
         // Enough for the sniffer, and enough for the extension fallback to have something to work
         // with on formats that have no magic number at all.
@@ -202,7 +203,7 @@ internal static class Commands
 
     internal static int List(Arguments args)
     {
-        args.RejectUnknown("names", "count", "absolute");
+        args.RejectUnknown("names", "count", "absolute", "recursive");
 
         var folder = args.Positional.Count == 0 ? "." : args.RequireOne("folder");
 
@@ -210,7 +211,9 @@ internal static class Commands
             throw new UsageException($"'{folder}' is not a folder");
 
         // The viewer's own scanner, so the order printed is exactly the order Space walks through.
-        var files = FolderScanner.ScanAsync(folder, CancellationToken.None)
+        var files = (args.Has("recursive")
+            ? FolderScanner.ScanRecursiveAsync(folder, CancellationToken.None)
+            : FolderScanner.ScanAsync(folder, CancellationToken.None))
             .GetAwaiter().GetResult();
 
         if (args.Has("count"))
@@ -266,14 +269,13 @@ internal static class Commands
         return CommandLine.Success;
     }
 
-    private static IEnumerable<string> WritableExtensions() =>
-        [".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".bmp", ".dib", ".tif", ".tiff", ".gif", ".wdp", ".jxr", ".hdp"];
+    private static IEnumerable<string> WritableExtensions() => ImageWriter.NativeExtensions;
 
     // ------------------------------------------------------- convert / resize / thumb
 
     internal static int Convert(Arguments args)
     {
-        args.RejectUnknown("quality", "out-dir", "format", "overwrite");
+        args.RejectUnknown("quality", "out-dir", "format", "overwrite", "recursive", "jobs");
 
         return Transform(args, new TransformOptions
         {
@@ -285,7 +287,7 @@ internal static class Commands
 
     internal static int Resize(Arguments args)
     {
-        args.RejectUnknown("width", "height", "quality", "out-dir", "format", "overwrite", "allow-upscale");
+        args.RejectUnknown("width", "height", "quality", "out-dir", "format", "overwrite", "allow-upscale", "recursive", "jobs");
 
         var width = args.Integer("width") ?? 0;
         var height = args.Integer("height") ?? 0;
@@ -306,7 +308,7 @@ internal static class Commands
 
     internal static int Thumb(Arguments args)
     {
-        args.RejectUnknown("size", "quality", "out-dir", "format", "overwrite", "embedded");
+        args.RejectUnknown("size", "quality", "out-dir", "format", "overwrite", "embedded", "recursive", "jobs");
 
         var size = args.Integer("size") ?? DefaultThumbSize;
 
@@ -343,19 +345,21 @@ internal static class Commands
         var outDir = args.Value("out-dir");
         var format = NormaliseExtension(args.Value("format")) ?? options.DefaultExtension;
         var overwrite = args.Has("overwrite");
+        var recursive = args.Has("recursive");
+        var jobs = Math.Max(1, args.Integer("jobs") ?? 1);
 
-        List<(string Input, string Output)> jobs = [];
+        List<(string Input, string Output)> work = [];
 
         if (outDir is not null)
         {
-            var inputs = ExpandInputs(args.RequireSome("input file"));
+            var inputs = ExpandInputs(args.RequireSome("input file"), recursive);
             Directory.CreateDirectory(outDir);
 
             foreach (var input in inputs)
             {
                 var extension = format ?? Path.GetExtension(input);
                 var name = Path.GetFileNameWithoutExtension(input) + extension;
-                jobs.Add((input, Path.Combine(outDir, name)));
+                work.Add((input, Path.Combine(outDir, name)));
             }
         }
         else
@@ -369,37 +373,58 @@ internal static class Commands
                     : "several inputs need --out-dir to say where the results go");
             }
 
-            jobs.Add((positional[0], positional[1]));
+            work.Add((positional[0], positional[1]));
         }
 
         var failures = 0;
 
-        foreach (var (input, output) in jobs)
+        if (jobs == 1)
         {
-            try
-            {
-                if (!overwrite && File.Exists(output) &&
-                    !string.Equals(Path.GetFullPath(input), Path.GetFullPath(output),
-                        StringComparison.OrdinalIgnoreCase))
+            foreach (var (input, output) in work)
+                if (!RunOneTransform(input, output, options, overwrite)) failures++;
+        }
+        else
+        {
+            var lockGate = new object();
+            System.Threading.Tasks.Parallel.ForEach(work,
+                new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = jobs },
+                pair =>
                 {
-                    Console.Error.WriteLine($"{output}: already exists (use --overwrite)");
-                    failures++;
-                    continue;
-                }
-
-                var image = LoadForTransform(input, options);
-                ImageWriter.Write(image, output, options.Quality);
-
-                Console.WriteLine($"{input} -> {output}  ({image.PixelWidth}x{image.PixelHeight})");
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"{input}: {ex.Message}");
-                failures++;
-            }
+                    if (!RunOneTransform(pair.Input, pair.Output, options, overwrite, lockGate))
+                        System.Threading.Interlocked.Increment(ref failures);
+                });
         }
 
         return failures == 0 ? CommandLine.Success : CommandLine.Failed;
+    }
+
+    private static bool RunOneTransform(
+        string input, string output, TransformOptions options, bool overwrite, object? consoleGate = null)
+    {
+        void Out(string text) { lock (consoleGate ?? new object()) Console.WriteLine(text); }
+        void Err(string text) { lock (consoleGate ?? new object()) Console.Error.WriteLine(text); }
+
+        try
+        {
+            if (!overwrite && File.Exists(output) &&
+                !string.Equals(Path.GetFullPath(input), Path.GetFullPath(output),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                Err($"{output}: already exists (use --overwrite)");
+                return false;
+            }
+
+            var image = LoadForTransform(input, options);
+            ImageWriter.Write(image, output, options.Quality);
+
+            Out($"{input} -> {output}  ({image.PixelWidth}x{image.PixelHeight})");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Err($"{input}: {ex.Message}");
+            return false;
+        }
     }
 
     private static BitmapSource LoadForTransform(string path, TransformOptions options)
@@ -465,7 +490,7 @@ internal static class Commands
 
     internal static int Rotate(Arguments args)
     {
-        args.RejectUnknown("cw", "ccw", "180", "re-encode");
+        args.RejectUnknown("cw", "ccw", "180", "re-encode", "recursive");
 
         var turns = new[] { args.Has("cw"), args.Has("ccw"), args.Has("180") }.Count(x => x);
         if (turns == 0) throw new UsageException("rotate needs --cw, --ccw or --180");
@@ -478,7 +503,7 @@ internal static class Commands
 
     internal static int Flip(Arguments args)
     {
-        args.RejectUnknown("horizontal", "vertical", "re-encode");
+        args.RejectUnknown("horizontal", "vertical", "re-encode", "recursive");
 
         var horizontal = args.Has("horizontal");
         var vertical = args.Has("vertical");
@@ -491,7 +516,7 @@ internal static class Commands
 
     private static int ApplyEdit(Arguments args, bool flipHorizontal, bool flipVertical, int rotation)
     {
-        var paths = ExpandInputs(args.RequireSome("file"));
+        var paths = ExpandInputs(args.RequireSome("file"), args.Has("recursive"));
         var reEncode = args.Has("re-encode");
         var failures = 0;
 
@@ -527,7 +552,7 @@ internal static class Commands
     /// process the way a Unix shell would, so without this <c>*.jpg</c> would arrive as a literal
     /// string and every command would report a file that does not exist.
     /// </remarks>
-    private static IReadOnlyList<string> ExpandInputs(IReadOnlyList<string> inputs)
+    private static IReadOnlyList<string> ExpandInputs(IReadOnlyList<string> inputs, bool recursive = false)
     {
         List<string> resolved = [];
 
@@ -535,8 +560,9 @@ internal static class Commands
         {
             if (Directory.Exists(input))
             {
-                resolved.AddRange(
-                    FolderScanner.ScanAsync(input, CancellationToken.None).GetAwaiter().GetResult());
+                resolved.AddRange(recursive
+                    ? FolderScanner.ScanRecursiveAsync(input, CancellationToken.None).GetAwaiter().GetResult()
+                    : FolderScanner.ScanAsync(input, CancellationToken.None).GetAwaiter().GetResult());
                 continue;
             }
 
