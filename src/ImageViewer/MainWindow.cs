@@ -159,7 +159,13 @@ public sealed class MainWindow : Window
         RenderOptions.SetBitmapScalingMode(_imageHost, BitmapScalingMode.HighQuality);
 
         _root = new Grid { ClipToBounds = true };
-        _root.Children.Add(_imageHost);
+        // A Grid gives its Image a viewport-sized layout slot. WPF then clips a larger
+        // full-resolution bitmap BEFORE applying our RenderTransform, cutting away
+        // pixels that should become visible when scaled or panned. Canvas arranges the
+        // image at its requested size; only the outer viewport should clip the result.
+        var imageSurface = new Canvas();
+        imageSurface.Children.Add(_imageHost);
+        _root.Children.Add(imageSurface);
         Content = _root;
 
         _interactionSettle = new DispatcherTimer(DispatcherPriority.Background)

@@ -51,7 +51,7 @@ development fallback.
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-249 checks currently pass. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
+251 checks currently pass. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
 58.5 MB installer locally in about 40 seconds.
 
 It was long recorded here as "not installed", which was wrong: winget puts Inno Setup under
@@ -618,6 +618,27 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-09-19 — zoom clipping fix for v0.2.4
+
+- Reproduced the reported partial-image failure after three Ctrl+wheel increments. The Image
+  was a direct Grid child, so WPF imposed a viewport-sized layout clip before RenderTransform
+  when refinement replaced the fit-sized bitmap with the full-resolution bitmap. This discarded
+  image pixels before zooming/panning. Put the Image in a Canvas inside the existing clipped
+  viewport; Canvas gives the bitmap its full layout size and the viewport clips only the result.
+- Actual WPF RenderTargetBitmap regression: the old layout went from 240,000 visible pixels to
+  zero at the resolution switch, both normally and rotated/panned. The new layout preserves the
+  visible image. The user's review JPEG was also tested read-only directly over SMB and visually
+  inspected after rendering. The supplied path had an extra separator; the matching file was
+  located in its parent Selected directory. No source photo or NAS data was modified.
+- Guarded Release build passed with no warnings; **251 passed / 0 failed**; separate 48-decode
+  assembly invariant passed. `ImageViewer.SelfTest --zoom-check <image>` now runs the real-photo
+  rendering diagnostic, with PNG evidence under `.codex-tmp/zoom-evidence` (gitignored).
+- GX10 review was consulted but returned speculative findings; the measured layout reproduction
+  determined the fix. No decoder, network service, or zoom-factor changes were needed.
+- Removed this session's private photo copy, render images and scratch test logs. v0.2.4 source
+  is ready for the already-authorized hosted validation/release route; installation verification
+  will be recorded after the published package is available.
 
 ### 2026-09-14 — v0.2.3 publication verified
 
