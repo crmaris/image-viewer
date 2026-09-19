@@ -21,6 +21,7 @@ packages/
 # Test artefacts
 TestResults/
 testimages/
+/.codex-tmp/
 
 # OS noise
 Thumbs.db
