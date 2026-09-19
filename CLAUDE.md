@@ -6,7 +6,7 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.3 released publicly; the locally built 0.2.3 is installed all-users at
+- **Version:** 0.2.4 released publicly; the verified published installer is installed all-users at
   `C:\Program Files\Image Viewer`.
   The CLI remains on the machine PATH.
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
@@ -618,6 +618,23 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-09-19 — v0.2.4 published, installed, and tested against the reported photo
+
+- PR #12 passed CI/security checks and merged as `a9b2dbc0b380f1c72b348c3f4b8722845b3a1731`.
+  Tag `v0.2.4` points to that commit on remote main. Release run `35464117357` succeeded,
+  publishing the installer and portable ZIP together. Feature branch removed after verifying
+  the merged tree matched it. Existing hosted execution authorization was retained.
+- Downloaded `build/release-verification/v0.2.4/ImageViewer-0.2.4-setup.exe` (61,348,696 bytes)
+  and verified SHA-256 `6918DA4170094AF7DB3E102F7329A382769FE368A4118240B8C186A475F1EFF4`
+  against GitHub's release asset digest. Installer returned 0, no restart, upgrading the existing
+  all-users Program Files directory. Installed executable reports
+  `0.2.4+a9b2dbc0b380f1c72b348c3f4b8722845b3a1731`.
+- Repeated `--zoom-check` using the **installed ImageViewer.dll** in an isolated test harness
+  against the reported JPEG read-only over SMB: normal zoom and rotated/panned rendering both
+  passed. The original photo's checksum was unchanged. Removed that temporary harness, private
+  render evidence and installation log; retained the verified release installer above.
+- Public installer: <https://github.com/crmaris/image-viewer/releases/download/v0.2.4/ImageViewer-0.2.4-setup.exe>.
 
 ### 2026-09-19 — zoom clipping fix for v0.2.4
 
