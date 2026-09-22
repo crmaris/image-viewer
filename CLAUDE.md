@@ -6,9 +6,9 @@ A fast, plain Windows image viewer. Opens essentially any image format, starts a
 allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.4 released publicly; the verified published installer is installed all-users at
-  `C:\Program Files\Image Viewer`.
-  The CLI remains on the machine PATH.
+- **Version:** 0.2.5 released publicly and deployed to the lab share. The machine's own install is
+  still the verified published **0.2.4** at `C:\Program Files\Image Viewer`; the CLI remains on the
+  machine PATH. Upgrading this workstation to 0.2.5 was not asked for and has not been done.
 - **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
   `packaging` (icon generator, publish scripts, Inno Setup script).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
@@ -379,6 +379,34 @@ self-test parses the `.iss` and fails if the two lists drift.
 
 ---
 
+## Lab share deployment
+
+Bench machines get Image Viewer from
+`\\Kronos\shared_folder\Useful Programs\1 Labaratory Apps\ImageViewer-<version>-setup.exe`, a
+**loose file in that folder**, not a subfolder. That is the convention already on the share, beside
+`picolog-setup`, `PicoScope6` and the other lab installers.
+
+⚠️ **That folder is READ-ONLY by default under the global NAS rule** — see exception 14 in
+`C:\Users\ARIS\.claude\CLAUDE.md`. Image Viewer's carve-out covers adding
+`ImageViewer-<version>-setup.exe` and moving a superseded one into the existing `0OLD\` subfolder.
+Nothing else in that folder may be touched, and the grant was **not** recorded as standing, so
+confirm before deploying another version.
+
+Rules that make a lab deployment safe:
+
+- **Only ever publish a build that is already public.** Download the asset from its GitHub release
+  and verify SHA-256 against GitHub's own digest **before** copying and **again on the share
+  after** — an SMB write can come up short and leave a correctly-named file with the wrong bytes
+  that a bench would then run. Never copy a local build there: a locally built installer carries
+  whatever `<Version>` the csproj happens to hold, so it can easily claim a version number whose
+  public release contains different code.
+- **Create-only.** Refuse to overwrite an installer already present; a bench may have installed from
+  it. Superseded versions move to `0OLD\`, by copy → verify hash → delete original, never a bare
+  move.
+- Use `V:` or a `.ps1`; Git Bash mangles a leading `\\` in a command-line argument and will report
+  a confident false "path does not exist".
+- The app self-updates from GitHub Releases, so a bench needs the share once. Do not build a sync.
+
 ## Auto-update
 
 `Update/AppUpdateService.cs` polls the public repo's `releases/latest` endpoint, at most once a day
@@ -618,6 +646,31 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-09-22 — v0.2.5 released and deployed to the lab share
+
+- The 2026-09-20 review batch (commit `1d4708c`) was unreleased and sitting on a **detached HEAD**.
+  `origin/main` was still at the v0.2.4 record, and local `main` is an older divergent branch
+  holding two owner documentation commits deliberately kept out of releases — so it was neither.
+  Fast-forwarded `origin/main` to `1d4708c` and tagged **v0.2.5** there.
+- Verified before publishing, on the exact commit released: **253 passed / 0 failed**, and the
+  fresh-process 48-decode assembly invariant still holds.
+- Release run `35754301446` succeeded in 2m38s. Assets and digests:
+  `ImageViewer-0.2.5-setup.exe` 61,365,213 bytes,
+  `sha256:f5af89ac0d1322c92e61fc066a1b5c6c40b4ed679cc6400497978be98eb26065`;
+  `ImageViewer-portable-win-x64.zip` 84,269,253 bytes,
+  `sha256:e01db3f4bcf5239345a41f1aea5c124b56d320945f5d4c930a275ab9579fdb78`.
+- Downloaded the published installer, verified its SHA-256 against GitHub's digest **before** the
+  copy, and re-verified it **on the share afterwards over the UNC path a bench uses** — both
+  matched, and the file begins `MZ`.
+- The superseded `ImageViewer-0.2.2-setup.exe` was moved into `0OLD\` (owner's choice over
+  deleting), by copy → hash check → delete original. Its hash
+  `6ad1643f…af6fac6` is unchanged, and is an exact match for the
+  published v0.2.2 digest — confirming the share's convention has always been hash-verified public
+  installers. No stray `.tmp`/`.part` left; the parent still holds 14 files and 22 directories,
+  with only 0.2.2 → 0.2.5 changed.
+- **This workstation was NOT upgraded** — it still runs the installed 0.2.4. The request was to
+  package and deploy to the lab, not to update this machine.
 
 ### 2026-09-20 — code review batch: correctness fixes, watcher/paste/help/touch, CLI recursive/parallel
 
