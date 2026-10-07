@@ -406,6 +406,19 @@ internal static class FeatureChecks
     {
         section("Updater: launching the installer");
 
+        var lockFolder = Path.Combine(Path.GetTempPath(), "imageviewer-update-lock-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(lockFolder);
+        try
+        {
+            var updateLock = AutoUpdateRunner.AcquireUpdateLock(lockFolder);
+            check("an active update excludes another preparation process",
+                updateLock is not null && AutoUpdateRunner.AcquireUpdateLock(lockFolder) is null);
+            Task.Run(() => updateLock!.Dispose()).GetAwaiter().GetResult();
+            using var nextLock = AutoUpdateRunner.AcquireUpdateLock(lockFolder);
+            check("the updater lock releases safely after an asynchronous continuation", nextLock is not null);
+        }
+        finally { Directory.Delete(lockFolder, recursive: true); }
+
         check("unattended updates are silent and never force-close a viewer",
             AppUpdateService.BuildUnattendedArguments().Contains("/VERYSILENT") &&
             AppUpdateService.BuildUnattendedArguments().Contains("/NOCLOSEAPPLICATIONS") &&

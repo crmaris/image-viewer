@@ -63,7 +63,11 @@ if ($RunUpdate) {
         if (-not (Test-Path -LiteralPath $cache)) { throw 'Missing protected updater cache.' }
         if (Test-Path -LiteralPath $pendingPath) { [IO.File]::Delete($pendingPath) }
         $backend = Start-Process -FilePath $AppExe -ArgumentList '--auto-update' -WindowStyle Hidden -Wait -PassThru
-        if ($backend.ExitCode -ne 0) { throw "Update preparation failed: $($backend.ExitCode)" }
+        if ($backend.ExitCode -ne 0) {
+            $detailPath=Join-Path $cache 'last-error.txt'
+            $detail=if(Test-Path -LiteralPath $detailPath){Get-Content -LiteralPath $detailPath -Raw}else{''}
+            throw "Update preparation failed: $($backend.ExitCode). $detail"
+        }
         if (-not (Test-Path -LiteralPath $pendingPath)) { exit 0 }
         $pending = Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json
         $installer = [IO.Path]::GetFullPath($pending.InstallerPath)
