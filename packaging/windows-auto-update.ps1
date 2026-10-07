@@ -10,8 +10,11 @@ $ErrorActionPreference = 'Stop'
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $taskName = if ($Mode -eq 'AllUsers') { 'ImageViewer-AutoUpdate-AllUsers' } else { "ImageViewer-AutoUpdate-$sid" }
 $cache = if ($Mode -eq 'AllUsers') { Join-Path $env:ProgramData 'ImageViewer\Updates' } else { Join-Path $env:LOCALAPPDATA 'ImageViewer\Updates' }
+$taskArguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $PSCommandPath +
+    '" -Mode ' + $Mode + ' -RunUpdate -AppExe "' + $AppExe + '"'
+$taskHost = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 if ($PlanOnly) {
-    [pscustomobject]@{TaskName=$taskName; Execute=$AppExe; Arguments='--auto-update'; Cache=$cache;
+    [pscustomobject]@{TaskName=$taskName; Execute=$taskHost; Arguments=$taskArguments; Cache=$cache;
         Principal=if($Mode -eq 'AllUsers'){'SYSTEM'}else{$sid};
         RunLevel=if($Mode -eq 'AllUsers'){'Highest'}else{'Limited'}; IntervalHours=1}
     return
@@ -105,9 +108,7 @@ if ($Mode -eq 'AllUsers') {
     $logon = New-ScheduledTaskTrigger -AtLogOn -User $sid
 }
 $hourly = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Hours 1)
-$arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $PSCommandPath +
-    '" -Mode ' + $Mode + ' -RunUpdate -AppExe "' + $AppExe + '"'
-$action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument $arguments
+$action = New-ScheduledTaskAction -Execute $taskHost -Argument $taskArguments
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logon,$hourly) `
