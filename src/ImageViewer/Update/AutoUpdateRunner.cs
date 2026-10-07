@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Security.Principal;
+using System.Text.Json;
 using Microsoft.Win32;
 
 namespace ImageViewer.Update;
@@ -89,12 +90,19 @@ internal static class AutoUpdateRunner
                     var path = Path.Combine(AppContext.BaseDirectory, file);
                     if (File.Exists(path)) File.Copy(path, Path.Combine(old, file), true);
                 }
-                using var setup = AppUpdateService.LaunchInstaller(installer, update.InstallerDigest!, mode, unattended: true);
-                if (setup is null) return 1;
-                await setup.WaitForExitAsync();
-                File.WriteAllText(Path.Combine(cache, "last-update.txt"),
-                    $"{DateTimeOffset.UtcNow:O} version={update.Version} exit={setup.ExitCode}");
-                return setup.ExitCode is 0 or 3010 ? 0 : 1;
+                // The scheduled PowerShell host waits for this process to exit before launching
+                // Setup. Waiting here would hold the very EXE/DLL that Setup must replace.
+                var pending = JsonSerializer.Serialize(new
+                {
+                    InstallerPath = installer, Digest = update.InstallerDigest,
+                    Version = update.Version.ToString(3), Mode = mode.ToString(),
+                    Arguments = AppUpdateService.BuildInstallerArguments(mode)
+                        .Concat(AppUpdateService.BuildUnattendedArguments()).ToArray(),
+                });
+                var target = Path.Combine(cache, "pending-update.json");
+                File.WriteAllText(target + ".tmp", pending);
+                File.Move(target + ".tmp", target, overwrite: true);
+                return 0;
             }
             finally { mutex.ReleaseMutex(); }
         }

@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('AllUsers','CurrentUser')][string]$Mode,
     [string]$AppExe,
+    [switch]$RunUpdate,
     [switch]$Remove,
     [switch]$PlanOnly
 )
@@ -42,6 +43,46 @@ if ($Mode -eq 'AllUsers') {
         }
     }
 }
+if ($RunUpdate) {
+    $pendingPath = Join-Path $cache 'pending-update.json'
+    try {
+        if (-not (Test-Path -LiteralPath $cache)) { throw 'Missing protected updater cache.' }
+        if (Test-Path -LiteralPath $pendingPath) { [IO.File]::Delete($pendingPath) }
+        $backend = Start-Process -FilePath $AppExe -ArgumentList '--auto-update' -WindowStyle Hidden -Wait -PassThru
+        if ($backend.ExitCode -ne 0) { throw "Update preparation failed: $($backend.ExitCode)" }
+        if (-not (Test-Path -LiteralPath $pendingPath)) { exit 0 }
+        $pending = Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json
+        $installer = [IO.Path]::GetFullPath($pending.InstallerPath)
+        if ($pending.Mode -ne $Mode -or $pending.Version -notmatch '^\d+\.\d+\.\d+$' -or
+            $installer -ne (Join-Path $cache "ImageViewer-$($pending.Version)-setup.exe") -or
+            $pending.Digest -notmatch '^sha256:[0-9a-fA-F]{64}$') { throw 'Invalid prepared update.' }
+        $expected = @("/$(if($Mode -eq 'AllUsers'){'ALLUSERS'}else{'CURRENTUSER'})", '/VERYSILENT',
+            '/SUPPRESSMSGBOXES','/NORESTART','/NOCLOSEAPPLICATIONS','/NORESTARTAPPLICATIONS')
+        if (($pending.Arguments -join '|') -ne ($expected -join '|')) { throw 'Unexpected installer arguments.' }
+        # Recheck for a viewer opened during the download. A process we cannot inspect defers.
+        foreach ($viewer in Get-Process -Name ImageViewer -ErrorAction SilentlyContinue) {
+            try { $path = $viewer.Path } catch { exit 0 }
+            if (-not $path -or $path -eq $AppExe) { exit 0 }
+        }
+        $stream = [IO.File]::Open($installer,'Open','Read','Read')
+        try {
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $actual = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
+            finally { $sha.Dispose() }
+            if ($actual -ne $pending.Digest.Substring(7).ToLowerInvariant()) { throw 'Installer changed after download.' }
+            $setup = Start-Process -FilePath $installer -ArgumentList ([string[]]$pending.Arguments) -WindowStyle Hidden -PassThru
+        } finally { $stream.Dispose() }
+        $setup.WaitForExit()
+        [IO.File]::WriteAllText((Join-Path $cache 'last-update.txt'),
+            "$(Get-Date -Format o) version=$($pending.Version) exit=$($setup.ExitCode)")
+        [IO.File]::Delete($pendingPath)
+        if ($setup.ExitCode -notin @(0,3010)) { throw "Automatic installation failed: $($setup.ExitCode)" }
+        exit 0
+    } catch {
+        [IO.File]::WriteAllText((Join-Path $cache 'last-error.txt'), $_.ToString())
+        exit 1
+    }
+}
 New-Item -ItemType Directory -Path $cache -Force | Out-Null
 if ((Get-Item -LiteralPath $cache).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unsafe updater cache.' }
 if ($Mode -eq 'AllUsers') {
@@ -64,7 +105,9 @@ if ($Mode -eq 'AllUsers') {
     $logon = New-ScheduledTaskTrigger -AtLogOn -User $sid
 }
 $hourly = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Hours 1)
-$action = New-ScheduledTaskAction -Execute $AppExe -Argument '--auto-update'
+$arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $PSCommandPath +
+    '" -Mode ' + $Mode + ' -RunUpdate -AppExe "' + $AppExe + '"'
+$action = New-ScheduledTaskAction -Execute (Join-Path $PSHOME 'powershell.exe') -Argument $arguments
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logon,$hourly) `
