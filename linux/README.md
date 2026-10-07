@@ -77,6 +77,11 @@ Keep your photos outside the portable application folder: unknown user files
 cause an update to be deferred rather than moved. Source checkouts never update
 themselves. Offline checks fail quietly and retry on the next interval.
 
+Portable automatic updates need a filesystem that enforces Linux ownership and
+permissions for their private update state. Windows-mounted NTFS under WSL may
+expose mode 0777 despite chmod; the updater refuses that state. Use a native Linux
+filesystem (for example your Linux home directory) for automatic portable updates.
+
 ## Controls
 
 | Input | Action |
