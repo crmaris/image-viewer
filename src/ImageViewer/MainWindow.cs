@@ -1455,7 +1455,9 @@ public sealed class MainWindow : Window
                 _availableUpdate = update;
 
                 ShowToast(update.CanInstallAutomatically
-                    ? $"Version {update.Version.ToString(3)} will install automatically when Image Viewer is closed."
+                    ? AutoUpdateRunner.OwnInstallMode() == AppUpdateService.InstallMode.Unknown
+                        ? $"Version {update.Version.ToString(3)} is available - press Ctrl+U to install."
+                        : $"Version {update.Version.ToString(3)} will install automatically when Image Viewer is closed."
                     : $"Version {update.Version.ToString(3)} is available - press Ctrl+U to open the release page.");
             }
             catch
@@ -1467,7 +1469,7 @@ public sealed class MainWindow : Window
         timer.Start();
     }
 
-    /// <summary>Downloads and runs the update, after confirming with the user.</summary>
+    /// <summary>Downloads and runs an explicitly requested update without a confirmation dialog.</summary>
     private async void InstallUpdate()
     {
         if (_updateInProgress) return;
