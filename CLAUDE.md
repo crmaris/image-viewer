@@ -9,7 +9,7 @@ with **Space** or the **mouse wheel**.
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
 - **Versions:** Windows **0.2.7** is published and installed at `C:\Program Files\Image Viewer`.
   Its unattended SYSTEM task is registered and a real automatic upgrade completed with exit 0.
-  Linux **0.2.6** is published as a Debian/Ubuntu package and portable archive; both unattended
+  Linux **0.2.7** is published as a Debian/Ubuntu package and portable archive; both unattended
   update paths were verified against the published release. The CLI remains on the machine PATH.
   The lab share's last recorded deployment is Windows 0.2.5; this session did not update that share.
 - **Repo layout:** `src/ImageViewer` (Windows), `tests/ImageViewer.SelfTest` (checks + benchmarks),
@@ -672,6 +672,59 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-10-08 — Linux format expansion published and installed
+
+- PR #18 merged as `da80bdb292814bbeff647182dbd515dbd9d8a7a8`; immutable tag/release
+  `linux-v0.2.7` points to that commit. Debian package SHA-256:
+  `989d55589b58bf31c34124a3fae62d4e90b8f3dc3721731381f6529d02293045` (33,042 bytes).
+  Portable SHA-256: `2a0e76aab5c5b968ee937d7033c21e7c5bca3554fda6c9f2d50db7be638ba210`
+  (22,426 bytes). GitHub digests match the local bytes. Windows latest remains `v0.2.7`.
+- The initial Linux port's small Pillow allowlist caused the gap. Added HEIC/HEIF, AVIF,
+  SVG/SVGZ, EXR/HDR, PSD/PSB composites, XCF first layers, LibRaw camera RAW, JPEG XR,
+  and JPEG XL where distro tools exist. A built-in QOI reader covers older Pillow on Jammy;
+  additional native Pillow formats include SGI, XBM/XPM, ICNS, DCX and others. Decoders use
+  content signatures with camera extensions as hints for some TIFF-based RAW containers.
+- Distribution helpers are lazy subprocesses using fixed executable paths, private input copies,
+  CPU/memory/output/time limits and generation cancellation. ImageMagick delegates/filters and
+  implicit EPS/PDF/WMF paths are excluded; SVG rejects entities, scripts and external references.
+  The documentation records first-image/layer limits, 8-bit sRGB RAW/HDR rendering, JPEG XR's
+  unavailable alpha, helper limits, and actual decoder-version dependence. Synthetic DNG verifies
+  the RAW path; no claim of qualification for every physical camera or desktop/compositor.
+- GUI validation found that opening a newly added image in the same folder left it outside the
+  navigation list. A new selection now refreshes the folder if it is not already listed.
+- Ubuntu 22.04 x86-64: 37 checks passed, one JPEG XL roundtrip skipped because Jammy has no
+  `libjxl-tools`, including six actual Tk GUI checks. Ubuntu 24.04 ARM64: all 32 decoder/updater
+  checks passed in an isolated CPU container on GX10 box 1, including a real JPEG XL roundtrip
+  and actual APT provisioning from missing codecs. Newer Ubuntu's separate HEVC decoder plugin
+  is handled. No host services/packages or Halo inference were changed. Windows CI passed all
+  257 checks and its fresh-process 48-decode assembly invariant. PR and merged-source CI/CodeQL
+  completed successfully (CI runs `37695000562` and `37695449176`).
+- Existing 0.2.6's published system updater automatically downloaded/verified/installed public
+  0.2.7 and kept `/var/lib/image-viewer-linux/rollback-0.2.6.deb`; the next invocation reported
+  current with service exit 0, and the hourly timer remains enabled/active. New root updater code
+  installs missing signed distro codecs without removing packages; Recommends preserves old
+  dpkg-only upgrade compatibility. JPEG XL/HEVC plugin requests are conditional on repository
+  availability; repositories are never changed. Portable/source apps never elevate or install APT
+  packages. The published 0.2.6 portable updater accepted the unchanged nine-file archive whitelist,
+  upgraded to 0.2.7 on a native Linux filesystem, and its upgraded decoder opened SVG.
+  Windows-mounted NTFS's permissive modes were refused safely; portable update state needs real
+  Linux ownership/mode support. No updater permission guard was weakened.
+- Installed WSL Linux 0.2.7 opened HEIC, AVIF, SVG, QOI, EXR and synthetic DNG; actual private-X11
+  SVG window/rotation screenshots and source hash readbacks were checked. Windows installed exe
+  still reports 0.2.7. Its SYSTEM task is protected from this non-elevated session (access denied),
+  not evidence that registration is missing; its prior verified evidence remains and was not changed.
+- Evidence/rollback retained in `build/linux/evidence/formats-0.2.7/`: Linux test logs, real ARM
+  provisioning log, validation summary, published release metadata, Windows regression excerpts,
+  live system/portable update reports, service journal/status, `rollback-0.2.6.deb`, installed decode
+  hashes, `installed-svg.png`, and `installed-svg-rotated.png`. Keep the newest Linux package/archive
+  in `build/linux` and previous-session evidence/rollback. Original test corpus files remain unchanged.
+- Cleaned only this task's material: 48 Windows scratch files in `.codex-tmp/formats-20261008`,
+  native Linux portable validation staging, and 14 GX10 staging files after retained evidence/source
+  hashes matched. Containers and private GUI processes exited. Previous-session scratch and local
+  owner-only `main` commits remain intact; owned merged task branches are removed after verification.
+  Rendering PC gateway refused connection and GX10 programming preflight rejected its AI Check
+  context; primary review/edits/tests continued, with no route/service changes or cloud subagents.
 
 ### 2026-10-08 — Linux companion released; unattended updates verified on both platforms
 
