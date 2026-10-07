@@ -38,10 +38,15 @@ if ($Mode -eq 'AllUsers') {
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'All-users setup requires elevation.' }
     # A SYSTEM task must never execute code from a directory writable by standard users.
     $writers = 'S-1-1-0','S-1-5-11','S-1-5-32-545'
-    foreach ($rule in (Get-Acl -LiteralPath (Split-Path $AppExe)).Access) {
+    # Ask the ACL for SIDs directly: package/service identities need not have
+    # a resolvable account name on this Windows installation.
+    $rules = (Get-Acl -LiteralPath (Split-Path $AppExe)).GetAccessRules(
+        $true,$true,[Security.Principal.SecurityIdentifier])
+    foreach ($rule in $rules) {
         if ($rule.AccessControlType -eq 'Allow' -and
-            $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -in $writers -and
-            ($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write)) {
+            $rule.IdentityReference.Value -in $writers -and
+            (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write) -or
+             ([long]$rule.FileSystemRights -band 0x50000000))) {
             throw 'Refusing a SYSTEM updater for a directory writable by standard users.'
         }
     }
@@ -58,7 +63,11 @@ if ($RunUpdate) {
         if (-not (Test-Path -LiteralPath $cache)) { throw 'Missing protected updater cache.' }
         if (Test-Path -LiteralPath $pendingPath) { [IO.File]::Delete($pendingPath) }
         $backend = Start-Process -FilePath $AppExe -ArgumentList '--auto-update' -WindowStyle Hidden -Wait -PassThru
-        if ($backend.ExitCode -ne 0) { throw "Update preparation failed: $($backend.ExitCode)" }
+        if ($backend.ExitCode -ne 0) {
+            $detailPath=Join-Path $cache 'last-error.txt'
+            $detail=if(Test-Path -LiteralPath $detailPath){Get-Content -LiteralPath $detailPath -Raw}else{''}
+            throw "Update preparation failed: $($backend.ExitCode). $detail"
+        }
         if (-not (Test-Path -LiteralPath $pendingPath)) { exit 0 }
         $pending = Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json
         $installer = [IO.Path]::GetFullPath($pending.InstallerPath)

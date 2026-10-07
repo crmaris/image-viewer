@@ -50,6 +50,16 @@ internal static class AutoUpdateRunner
         return false;
     }
 
+    internal static FileStream? AcquireUpdateLock(string cache)
+    {
+        try
+        {
+            return new FileStream(Path.Combine(cache, "update.lock"), FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException) { return null; }
+    }
+
     internal static async Task<int> RunAsync()
     {
         string? cache = null;
@@ -67,9 +77,10 @@ internal static class AutoUpdateRunner
             // arbitrary administrator-writable directory during an unattended update.
             if (!Directory.Exists(cache) || (File.GetAttributes(cache) & FileAttributes.ReparsePoint) != 0)
                 return 1;
-            using var mutex = new Mutex(false, mode == AppUpdateService.InstallMode.AllUsers
-                ? "Global\\ImageViewerAutomaticUpdate" : "Local\\ImageViewerAutomaticUpdate");
-            if (!mutex.WaitOne(0)) return 0;
+            // File locks remain valid across await continuations. A named Mutex is owned by
+            // the acquiring OS thread and cannot be released by a later thread-pool continuation.
+            using var updateLock = AcquireUpdateLock(cache);
+            if (updateLock is null) return 0;
             try
             {
                 var service = new AppUpdateService();
@@ -104,7 +115,7 @@ internal static class AutoUpdateRunner
                 File.Move(target + ".tmp", target, overwrite: true);
                 return 0;
             }
-            finally { mutex.ReleaseMutex(); }
+            finally { updateLock.Dispose(); }
         }
         catch (Exception error)
         {
