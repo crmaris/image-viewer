@@ -101,6 +101,7 @@ def build(output, version):
             f'Package: image-viewer-linux\nVersion: {version}\nSection: graphics\nPriority: optional\n'
             'Architecture: all\nMaintainer: Image Viewer contributors <noreply@github.com>\n'
             'Depends: python3 (>= 3.10), python3-tk, python3-pil (>= 9.0), python3-pil.imagetk, systemd\n'
+            'Recommends: imagemagick, librsvg2-bin, libraw-bin, libjxr-tools, libjxl-tools, libheif-plugin-libde265\n'
             'Homepage: https://github.com/crmaris/image-viewer\n'
             'Description: Image Viewer Linux companion\n'
             ' Browse, zoom, rotate the view, play animations, inspect TIFF pages,\n'

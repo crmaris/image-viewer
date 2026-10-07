@@ -5,6 +5,7 @@ repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
 export PYTHONDONTWRITEBYTECODE=1
 python3 -m unittest discover -s linux -p test_viewer_core.py -v
+python3 -m unittest discover -s linux -p test_formats.py -v
 python3 -m unittest discover -s linux -p test_updates.py -v
 if ! command -v openbox >/dev/null || ! command -v xvfb-run >/dev/null; then
     echo 'GUI checks require xvfb, xauth and openbox (a test-only window manager).' >&2

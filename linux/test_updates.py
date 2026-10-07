@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import urllib.request
-from update_service import PORTABLE_FILES, ReleaseClient, SafeRedirect, replace_portable, run_update, select_release
+from update_service import PORTABLE_FILES, ReleaseClient, SafeRedirect, provision_decoders, replace_portable, run_update, select_release
 
 
 def release(version='0.2.6', kind='portable', payload=b'payload'):
@@ -121,6 +121,38 @@ class UpdateChecks(unittest.TestCase):
     def test_source_checkout_never_updates_itself(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(run_update(Path(directory)), {'status': 'source-checkout'})
+
+    def test_decoder_bootstrap_uses_only_signed_distro_packages_and_no_removals(self):
+        import subprocess
+        # Simulate an old installation with no helper packages and a distro with
+        # no JPEG XL candidate. It must still install the other four codecs.
+        with patch('update_service.Path.is_file', return_value=False), patch('update_service.subprocess.run') as run:
+            run.side_effect = [subprocess.CompletedProcess([], 100, stdout=b''),
+                               subprocess.CompletedProcess([], 100, stdout=b''),
+                               subprocess.CompletedProcess([], 100, stdout=b''), subprocess.CompletedProcess([], 0)]
+            installed = provision_decoders()
+            self.assertEqual(set(installed), {'imagemagick', 'librsvg2-bin', 'libraw-bin', 'libjxr-tools'})
+            apt = run.call_args_list[-1]
+            self.assertIn('--no-remove', apt.args[0])
+            self.assertNotIn('--allow-unauthenticated', apt.args[0])
+            self.assertEqual(apt.kwargs['env']['DEBIAN_FRONTEND'], 'noninteractive')
+        with patch('update_service.Path.is_file', return_value=False), patch('update_service.subprocess.run') as run:
+            run.side_effect = [subprocess.CompletedProcess([], 0, stdout=b'install ok installed'),
+                               subprocess.CompletedProcess([], 0, stdout=b'Package: libjxl-tools\n'),
+                               subprocess.CalledProcessError(100, ['apt-get'])]
+            with self.assertRaises(subprocess.CalledProcessError):
+                provision_decoders()
+
+    def test_portable_does_not_provision_privileged_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'portable'
+            root.mkdir()
+            (root / 'INSTALL_KIND').write_text('portable')
+            (root / 'VERSION').write_text('0.2.7')
+            client = ReleaseClient()
+            with patch.object(client, 'releases', return_value=[]), patch('update_service.provision_decoders') as provision:
+                self.assertEqual(run_update(root, client)['status'], 'current')
+                provision.assert_not_called()
 
 
 if __name__ == '__main__':

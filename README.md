@@ -150,7 +150,9 @@ A portable zip is also published; unzip it anywhere and run `ImageViewer.exe`.
 A native Linux companion provides folder browsing, full-resolution zoom, view rotation,
 GIF/WebP playback, TIFF pages and safe PNG-copy saving. Download its Debian/Ubuntu `.deb`
 or portable `.tar.gz` from the separate Linux release. See [Linux installation and controls](linux/README.md).
-The Linux format list and features differ from the Windows version; image originals stay unchanged.
+Linux 0.2.7 adds HEIC/AVIF, SVG/SVGZ, EXR/HDR, Photoshop composites, camera RAW,
+JPEG XR, QOI and more. JPEG XL needs Ubuntu 24.04+/Debian 12+ decoder tools.
+See the Linux format table for rendering limits; image originals stay unchanged.
 
 Installed copies automatically check, download and install verified updates. The installer registers
 an hourly task with the same scope as the installation: SYSTEM for all users, or your user account
