@@ -202,6 +202,36 @@ def install_deb(download, version, state, current):
     return rollback
 
 
+def provision_decoders():
+    """Bridge old dpkg-only updaters without adding unsatisfied hard dependencies.
+
+    Only the root system timer may call this. Portable apps never install packages.
+    APT retains its normal signed repository checks and may not remove packages.
+    """
+    required = {'imagemagick': ('convert', 'magick'), 'librsvg2-bin': ('rsvg-convert',),
+                'libraw-bin': ('dcraw_emu',), 'libjxr-tools': ('JxrDecApp',)}
+    missing = [package for package, tools in required.items()
+               if not any((Path('/usr/bin') / name).is_file() for name in tools)]
+    # JPEG XL is absent from Ubuntu 22.04. Newer libheif packages split the HEVC
+    # decoder into a plugin. Request either only where the distro provides it.
+    optional = [] if Path('/usr/bin/djxl').is_file() else ['libjxl-tools']
+    hevc = subprocess.run(['/usr/bin/dpkg-query', '-W', '-f=${Status}', 'libheif-plugin-libde265'],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+    if hevc.returncode or hevc.stdout != b'install ok installed':
+        optional.append('libheif-plugin-libde265')
+    for package in optional:
+        available = subprocess.run(['/usr/bin/apt-cache', 'show', package],
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        if available.returncode == 0 and ('Package: ' + package).encode() in available.stdout:
+            missing.append(package)
+    if missing:
+        subprocess.run(['/usr/bin/apt-get', '-y', '--no-remove', '-o', 'DPkg::Lock::Timeout=30',
+                        '-o', 'Acquire::Retries=1', '-o', 'Acquire::http::Timeout=15',
+                        '-o', 'Acquire::https::Timeout=15', 'install', *missing], check=True,
+                       timeout=180, env={**os.environ, 'DEBIAN_FRONTEND': 'noninteractive'})
+    return missing
+
+
 def run_update(root=None, client=None):
     root = (root or Path(__file__).resolve().parent).resolve()
     marker = root / 'INSTALL_KIND'
@@ -227,6 +257,8 @@ def run_update(root=None, client=None):
         except BlockingIOError:
             return {'status': 'busy'}
         current = (root / 'VERSION').read_text().strip()
+        if kind == 'deb':
+            provision_decoders()
         client = client or ReleaseClient()
         selected = select_release(client.releases(), current, kind)
         if selected is None:

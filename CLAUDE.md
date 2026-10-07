@@ -3,7 +3,7 @@
 **Canonical handover document.** `AGENTS.md` is a thin pointer to this file; keep the content here.
 
 A fast, plain Windows image viewer with a native Linux companion. Windows opens essentially any
-image format; Linux's narrower format list is documented in `linux/README.md`. Both browse a folder
+image format; Linux's decoder layers and remaining limits are documented in `linux/README.md`. Both browse a folder
 with **Space** or the **mouse wheel**.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
@@ -13,7 +13,7 @@ with **Space** or the **mouse wheel**.
   update paths were verified against the published release. The CLI remains on the machine PATH.
   The lab share's last recorded deployment is Windows 0.2.5; this session did not update that share.
 - **Repo layout:** `src/ImageViewer` (Windows), `tests/ImageViewer.SelfTest` (checks + benchmarks),
-  `linux` (Python/Tk/Pillow companion and updater), `packaging` (Windows packaging).
+  `linux` (Python/Tk companion, distribution decoder tools and updater), `packaging` (Windows packaging).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
 
 ---
@@ -54,8 +54,9 @@ development fallback.
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-257 Windows checks currently pass. Linux has 22 checks on Ubuntu 22.04 x86-64 and 17 decoder/updater
-checks on Ubuntu 24.04 ARM64. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
+257 Windows checks currently pass. Linux 0.2.7 validation has 37 passing checks on Ubuntu 22.04 x86-64
+(one JPEG XL test skipped because Jammy has no package) and 32 passing decoder/updater checks on
+Ubuntu 24.04 ARM64, including JPEG XL. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
 58.5 MB installer locally in about 40 seconds.
 
 It was long recorded here as "not installed", which was wrong: winget puts Inno Setup under

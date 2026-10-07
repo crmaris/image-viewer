@@ -114,6 +114,22 @@ class LinuxGui(unittest.TestCase):
             for widget in row.winfo_children():
                 self.assertLessEqual(widget.winfo_x() + widget.winfo_width(), row.winfo_width())
 
+    def test_svg_decoder_browse_rotate_and_png_copy_in_actual_gui(self):
+        svg = self.folder / 'vector.svg'
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#20b450"/></svg>')
+        self.hashes[svg] = hashlib.sha256(svg.read_bytes()).hexdigest()
+        self.viewer.open(svg)
+        self.pump(lambda: self.viewer.current is not None and self.viewer.current.format == 'SVG' and self.viewer.photo is not None)
+        self.pump(lambda: str(svg) in self.viewer.files)
+        self.assertEqual(self.viewer.current.image.getpixel((20, 20)), (32, 180, 80, 255))
+        self.viewer.rotate()
+        destination = self.folder / 'svg-copy.png'
+        with patch('viewer.filedialog.asksaveasfilename', return_value=str(destination)):
+            self.viewer.save_copy()
+        self.pump(lambda: destination.is_file())
+        with Image.open(destination) as image:
+            self.assertEqual(image.size, (200, 300))
+
 
 if __name__ == '__main__':
     unittest.main()

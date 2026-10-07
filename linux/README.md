@@ -1,6 +1,6 @@
 # Image Viewer for Linux
 
-The native Linux companion uses Python 3.10+, Tk and Pillow. It browses a folder,
+The native Linux companion uses Python 3.10+, Tk, Pillow and distribution decoder tools. It browses a folder,
 zooms from full-resolution pixels, rotates the view, plays GIF/WebP animations,
 opens TIFF pages, and saves an explicit rendered PNG copy. Image originals are
 never overwritten. Linux uses separate packages and launchers; the Windows
@@ -8,16 +8,16 @@ application and its updater continue to use the Windows releases.
 
 ## Install on Ubuntu or Debian
 
-Download `image-viewer-linux_0.2.6_all.deb` from the Linux release, then run:
+Download `image-viewer-linux_0.2.7_all.deb` from the [Linux release](https://github.com/crmaris/image-viewer/releases/tag/linux-v0.2.7), then run:
 
 ```sh
-sudo apt install ./image-viewer-linux_0.2.6_all.deb
+sudo apt install ./image-viewer-linux_0.2.7_all.deb
 imageviewer-linux
 ```
 
 The package installs `imageviewer-linux`, `imageviewer-linux-cli`, an application
 menu entry, and Open With registration. It does not change default MIME handlers.
-Python, Tk and Pillow dependencies are supplied by your distribution. This package
+Python, Tk, Pillow and recommended decoder tools are supplied by your distribution. This package
 contains no compiled CPU-specific code; the same package can be used on x86-64
 and ARM64 systems with those dependencies. Tested configurations are recorded
 in the release notes and project handover. Remove with `sudo apt remove image-viewer-linux`.
@@ -27,10 +27,14 @@ in the release notes and project handover. Remove with `sudo apt remove image-vi
 On Ubuntu/Debian, install dependencies once:
 
 ```sh
-sudo apt install python3-tk python3-pil python3-pil.imagetk
+sudo apt install python3-tk python3-pil python3-pil.imagetk imagemagick librsvg2-bin libraw-bin libjxr-tools
+# JPEG XL, on Ubuntu 24.04+/Debian 12+:
+sudo apt install libjxl-tools
+# Ubuntu 24.04+ also packages HEIC decoding separately:
+sudo apt install libheif-plugin-libde265
 ```
 
-Extract `ImageViewer-0.2.6-linux.tar.gz` and run `./imageviewer-linux` from the
+Extract `ImageViewer-0.2.7-linux.tar.gz` and run `./imageviewer-linux` from the
 extracted folder. To open a file, pass its path as the first argument:
 
 ```sh
@@ -38,7 +42,9 @@ extracted folder. To open a file, pass its path as the first argument:
 ```
 
 From a source checkout, use `python3 linux/viewer.py`. Other distributions need
-matching Python Tk and Pillow packages, including ImageTk and ImageCms. The GUI
+matching Python Tk and Pillow packages, including ImageTk and ImageCms, plus
+matching ImageMagick, librsvg, LibRaw, jxrlib and JPEG XL tools. Helpers also need
+`prlimit` from util-linux, normally installed with the operating system. The GUI
 needs X11 or a desktop supporting XWayland. The CLI works without a display.
 
 ## Fully automatic updates
@@ -54,6 +60,15 @@ reinstall the rollback package. Check with:
 systemctl status image-viewer-linux-update.timer
 journalctl -u image-viewer-linux-update.service
 ```
+
+The system timer also installs missing distribution decoder packages using APT's
+normal signed repositories, without removing packages. This lets 0.2.6's dpkg-only
+updater install 0.2.7 first; on the next timer run the new updater supplies the
+extra codecs. A normal `apt install` of the new package supplies them immediately.
+Offline/locked package-manager attempts fail and retry later. JPEG XL is installed
+only when available in configured distribution repositories; repositories are
+never changed to obtain a codec. Portable/source copies never request root access
+or install system packages; install their dependencies once as shown above.
 
 Portable copies check after startup and hourly while running. A verified archive
 replaces the application folder atomically, with the previous folder retained
@@ -84,16 +99,42 @@ Uncheck **Play animation** to pause. Manual frame selection also pauses playback
 
 ## Formats and colour
 
-Content is identified rather than trusting the extension. Allowed Pillow decoders
-cover JPEG, PNG, GIF, BMP, DIB, TIFF, WebP, ICO, PPM/PGM/PNM, TGA, PCX, QOI,
-JPEG 2000 and DDS. Availability depends on the distribution's Pillow build; QOI
-is absent from Ubuntu 22.04's Pillow 9.0.1. SVG, EXR, JXR, HEIC, JPEG-XL, RAW
-and other Windows fallback formats are not supported. EPS/WMF and external-helper
-decoders are rejected. Unsupported/corrupt input produces a visible error.
+The first Linux release used only a small Pillow decoder set. Version 0.2.7 adds
+decoder layers while retaining the native GUI and automatic updates.
+
+| Decoder | Formats |
+|---|---|
+| Pillow, in process | JPEG, PNG/APNG, GIF, BMP/DIB, TIFF, WebP, ICO, PPM/PGM/PNM, TGA, PCX, JPEG 2000, DDS, SGI, XBM/XPM, DCX, ICNS, MPO, Sun raster, MSP, FLI/FLC, FITS, Pixar, IM |
+| Built-in QOI reader | QOI, including Ubuntu 22.04 with older Pillow |
+| ImageMagick | HEIC/HEIF, AVIF, EXR, Radiance HDR, PSD/PSB composite, XCF first layer |
+| librsvg | SVG/SVGZ, including transparency and internal references |
+| LibRaw | Camera RAW supported by the installed LibRaw version: DNG, CR2/CR3/CRW, NEF/NRW, ARW/SRF/SR2, RAF, ORF, RW2, PEF, SRW and others |
+| jxrlib | JPEG XR, rendered as 8-bit RGB; alpha is unavailable and a warning is shown |
+| JPEG XL tools | JPEG XL on Ubuntu 24.04+/Debian 12+ with `libjxl-tools`; not packaged on Ubuntu 22.04 |
+
+Content is sniffed for ordinary images and additional formats, so renamed images
+still open. Some TIFF-based camera RAW containers also use their camera extension
+as a decoder hint. Actual camera/model and compression support depends on your
+distribution's decoder versions. The fixtures use synthetic DNG; they do not
+qualify every camera. Extra codecs display the composite/first image (XCF's first
+layer), not editable layers or HEIF/JXL animation.
+
+Tools run only when a matching file is opened. Missing tools produce a specific
+package-install message. Helpers use private input copies, fixed distribution
+executable paths, and CPU/memory/output/time limits. ImageMagick uses explicit
+raster coders with delegates/filters disabled. SVG is passed through stdin without
+a base URL and rejects scripts, entities and external file/web references. SVG
+must be UTF-8 and is limited to 8192 pixels per side. Other helper input/output is
+limited to 256 MiB and decoded images to 40 megapixels. EPS, PostScript, PDF and WMF
+implicit-helper paths remain excluded. Unsupported/corrupt/oversized input produces
+a visible error.
 
 EXIF orientation and embedded ICC-to-sRGB conversion are applied once per decoded
-frame. Alpha is preserved, and CMYK is transformed through its embedded profile.
-Invalid profiles produce a visible warning and an sRGB fallback. Tk receives
+frame. Alpha is preserved where the selected decoder supplies it (JPEG XR is RGB
+only), and CMYK is transformed through its embedded profile. Invalid Pillow
+profiles produce a warning and sRGB fallback; failed helper colour conversions
+produce an error. RAW uses camera white balance with no automatic exposure lift;
+EXR/HDR displays a precision/clipping warning. Tk receives
 sRGB pixels; monitor-profile conversion and colour parity with Windows WIC have
 not been established. Decompression-bomb warnings are rejected.
 
@@ -124,6 +165,7 @@ On Linux, install `desktop-file-utils` and use your distribution's `dpkg-deb`:
 ```sh
 python3 linux/build-package.py
 python3 -B -m unittest discover -s linux -p test_viewer_core.py -v
+python3 -B -m unittest discover -s linux -p test_formats.py -v
 sh linux/checks.sh
 ```
 
@@ -131,11 +173,14 @@ Outputs: `.deb`, portable `.tar.gz`, and `SHA256SUMS` in `build/linux`. The buil
 accepts `--output` and `--version`; staging stays inside the project and is removed
 when the build finishes.
 
-Core fixtures verify source preservation, colour handling, frame/page decoding,
+Core and format fixtures verify source preservation, colour handling, frame/page decoding,
 natural ordering, cursor anchoring, extreme zoom and exclusive copy saving. GUI
 checks run the actual Tk app in an isolated X11 display and exercise browsing,
 zoom, pan, fullscreen, animation, copy saving, compact layout and stale result
 rejection. They do not prove every physical desktop, compositor, scale or distro.
+Format fixtures create real HEIC/AVIF, EXR/HDR, PSD/PSB, SVG/SVGZ, XCF, RAW DNG,
+JPEG XR, QOI and JPEG XL files, and test cancellation and forbidden content.
+JPEG XL's roundtrip is skipped on distributions without its encoder/decoder tools.
 The GUI checks require test-only `xvfb`, `xauth`, and `openbox` packages; they are
 not application dependencies. Openbox runs only inside the isolated test display.
 
@@ -145,4 +190,6 @@ scanning runs separately after the first image appears. A bounded viewport tile
 comes from full decoded pixels, never a giant bitmap at 64x zoom. Source changes
 during decoding abort publication.
 
-MIT; see the included LICENSE or the repository's root license.
+Application code: MIT; see the included LICENSE or repository root license.
+Decoder tools/libraries are separate distribution packages under their own licenses
+(ImageMagick, LGPL librsvg, LGPL/CDDL LibRaw, BSD jxrlib and BSD JPEG XL).

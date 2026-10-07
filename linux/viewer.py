@@ -197,7 +197,7 @@ class Viewer:
         self.draw_later()
         self.animate()
         folder = Path(result.ticket.path).parent
-        if self.folder != folder:
+        if self.folder != folder or (kind == 'new' and result.ticket.path not in self.files):
             self.folder = folder
             self.files = [result.ticket.path]
             ticket = self.folder_gate.request(folder)
