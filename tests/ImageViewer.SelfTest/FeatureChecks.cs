@@ -406,7 +406,8 @@ internal static class FeatureChecks
     {
         section("Updater: launching the installer");
 
-        var lockFolder = Path.Combine(Path.GetTempPath(), "imageviewer-update-lock-" + Guid.NewGuid().ToString("N"));
+        var lockFolder = Path.Combine(Directory.GetCurrentDirectory(), ".codex-tmp",
+            "imageviewer-update-lock-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(lockFolder);
         try
         {
