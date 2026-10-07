@@ -49,6 +49,12 @@ if ($Mode -eq 'AllUsers') {
 if ($RunUpdate) {
     $pendingPath = Join-Path $cache 'pending-update.json'
     try {
+        if ($Mode -eq 'CurrentUser') {
+            New-Item -ItemType Directory -Path $cache -Force | Out-Null
+            if ((Get-Item -LiteralPath $cache).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw 'Unsafe per-user updater cache.'
+            }
+        }
         if (-not (Test-Path -LiteralPath $cache)) { throw 'Missing protected updater cache.' }
         if (Test-Path -LiteralPath $pendingPath) { [IO.File]::Delete($pendingPath) }
         $backend = Start-Process -FilePath $AppExe -ArgumentList '--auto-update' -WindowStyle Hidden -Wait -PassThru
@@ -82,7 +88,9 @@ if ($RunUpdate) {
         if ($setup.ExitCode -notin @(0,3010)) { throw "Automatic installation failed: $($setup.ExitCode)" }
         exit 0
     } catch {
-        [IO.File]::WriteAllText((Join-Path $cache 'last-error.txt'), $_.ToString())
+        if (Test-Path -LiteralPath $cache) {
+            [IO.File]::WriteAllText((Join-Path $cache 'last-error.txt'), $_.ToString())
+        } else { Write-Error $_ }
         exit 1
     }
 }
