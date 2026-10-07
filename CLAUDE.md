@@ -2,15 +2,18 @@
 
 **Canonical handover document.** `AGENTS.md` is a thin pointer to this file; keep the content here.
 
-A fast, plain Windows image viewer. Opens essentially any image format, starts as quickly as WPF
-allows, and walks a folder with **Space** or the **mouse wheel**. Built 2026-08-13/14.
+A fast, plain Windows image viewer with a native Linux companion. Windows opens essentially any
+image format; Linux's narrower format list is documented in `linux/README.md`. Both browse a folder
+with **Space** or the **mouse wheel**.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Version:** 0.2.5 released publicly and deployed to the lab share. The machine's own install is
-  still the verified published **0.2.4** at `C:\Program Files\Image Viewer`; the CLI remains on the
-  machine PATH. Upgrading this workstation to 0.2.5 was not asked for and has not been done.
-- **Repo layout:** `src/ImageViewer` (app), `tests/ImageViewer.SelfTest` (checks + benchmarks),
-  `packaging` (icon generator, publish scripts, Inno Setup script).
+- **Versions:** Windows **0.2.7** is published and installed at `C:\Program Files\Image Viewer`.
+  Its unattended SYSTEM task is registered and a real automatic upgrade completed with exit 0.
+  Linux **0.2.6** is published as a Debian/Ubuntu package and portable archive; both unattended
+  update paths were verified against the published release. The CLI remains on the machine PATH.
+  The lab share's last recorded deployment is Windows 0.2.5; this session did not update that share.
+- **Repo layout:** `src/ImageViewer` (Windows), `tests/ImageViewer.SelfTest` (checks + benchmarks),
+  `linux` (Python/Tk/Pillow companion and updater), `packaging` (Windows packaging).
 - **Public repo:** <https://github.com/crmaris/image-viewer> (MIT). `main` is the default branch.
 
 ---
@@ -51,7 +54,8 @@ development fallback.
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-251 checks currently pass. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
+257 Windows checks currently pass. Linux has 22 checks on Ubuntu 22.04 x86-64 and 17 decoder/updater
+checks on Ubuntu 24.04 ARM64. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
 58.5 MB installer locally in about 40 seconds.
 
 It was long recorded here as "not installed", which was wrong: winget puts Inno Setup under
@@ -412,8 +416,27 @@ Rules that make a lab deployment safe:
 `Update/AppUpdateService.cs` polls the public repo's `releases/latest` endpoint, at most once a day
 (timestamp in `%APPDATA%\ImageViewer\update-check.txt`). The check is scheduled from
 `ContentRendered` on a 4-second idle-priority timer, so it is **never on the startup path**, and it
-fails silently when offline. If a newer release exists the user gets a toast; **Ctrl+U** then asks
-for confirmation before anything is downloaded or run.
+fails silently when offline. Installed Windows copies also have an hourly unattended task:
+`ImageViewer-AutoUpdate-AllUsers` runs as SYSTEM, while per-user tasks run as the installing user.
+The scheduled PowerShell host invokes `ImageViewer.exe --auto-update` to prepare a verified
+installer, waits for that backend to exit, then checks the digest under a read lock and applies
+the installer silently. Active viewers defer updates. The registered install directory and scope
+must match, preventing a portable/development copy from upgrading another installation.
+
+`packaging/windows-auto-update.ps1` protects the SYSTEM cache and its parent, checks application
+permissions by SID rather than account-name translation, and registers/removes the task from
+Setup/uninstall. `AutoUpdateRunner` uses an exclusive file lock across asynchronous work; a named
+Mutex cannot be released from a different continuation thread. The cache is under
+`%PROGRAMDATA%\ImageViewer\Updates` for SYSTEM or `%LOCALAPPDATA%\ImageViewer\Updates` per-user.
+Windows portable copies retain manual updates. Ctrl+U remains an explicit install command and
+does not show the former application confirmation dialog; Windows may still require elevation
+for an explicit manual all-users install.
+
+Linux packages enable `image-viewer-linux-update.timer`; portable copies check after startup and
+hourly while running. `linux-v*` releases are a separate channel and are never selected by the
+Windows latest-release updater. Linux verifies immutable metadata, size and SHA-256, retains a
+rollback package/folder, and rejects unsafe portable archive entries. Source checkouts do not
+update themselves. See `linux/README.md` for supported formats, dependencies and validation.
 
 Rules that must not be relaxed:
 
@@ -428,12 +451,14 @@ Rules that must not be relaxed:
   the updater hashes the completed file a second time and keeps a read handle open across
   `Process.Start`, preventing a local replacement between verification and execution. A partial,
   mismatched or post-download-modified file is deleted or rejected rather than run.
-- Prereleases are skipped. A release with no `*setup*.exe` asset opens the release page instead.
+- Prereleases and mutable releases are skipped. Unattended Windows installation also checks the
+  exact repository, version tag and installer name. A release without an installer remains a link.
 - `HttpClient` is `Lazy` — not just tidiness. It was originally an eager static initialiser declared
   *before* `CurrentVersion`, read a null version, and threw `TypeInitializationException`. Static
   fields initialise in declaration order.
 
-`RepositoryOwner`/`RepositoryName` in `AppUpdateService` are the only place the repo is named.
+Keep `RepositoryOwner`/`RepositoryName`, the unattended runner's exact-repository validation, and
+the Linux updater's repository/channel constants aligned.
 
 ### The install-mode trap (fixed 2026-08-14)
 
@@ -512,7 +537,7 @@ test. Note that running it writes the throttle timestamp, so the app will skip i
   Its threat model is `remote`: local file paths and user-launched local commands are core desktop
   app inputs, and treating every local input as hostile produced 87 non-actionable path alerts.
 - GitHub immutable releases are enabled. Existing v0.2.0 predates that setting and remains mutable;
-  latest v0.2.1 is verified immutable with both release-asset digests populated.
+  current Windows v0.2.7 and Linux linux-v0.2.6 are verified immutable with all asset digests populated.
 - There is no Authenticode certificate or signing secret in the repository. Do not fabricate a
   self-signed publisher identity; the current executable-integrity chain is GitHub's release asset
   digest, updater SHA-256 verification and release immutability.
@@ -646,6 +671,58 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-10-08 — Linux companion released; unattended updates verified on both platforms
+
+- Completed the native Tk/Pillow companion: content-based decoding, natural folder browsing,
+  full-resolution viewport tiles, cursor zoom/pan, view rotation, animation/TIFF pages,
+  fullscreen, keyboard controls, and exclusive PNG-copy saving. Originals remain read-only.
+  Linux is an 8-bit sRGB companion with a narrower decoder set, not full Windows format parity.
+- Linux `linux-v0.2.6` ships `image-viewer-linux_0.2.6_all.deb`,
+  `ImageViewer-0.2.6-linux.tar.gz`, and `SHA256SUMS`. Digests are respectively
+  `e34e563e517024615051a96878d2f2e2c1077c7903632662d2ff45079ad27125` and
+  `37816a8d49547446decc08aa5cb515890df4d2f6dfd4000271de8b4a6e4d1877`.
+  The release is immutable and not marked as the Windows latest release.
+- Actual Ubuntu 22.04 x86-64 validation: 9 decoder fixtures, 8 updater safety fixtures, 5 actual
+  Tk/X11 checks, installed GUI/CLI and native keyboard/mouse input. Original fixture hashes were
+  preserved. GUI captures used Xvfb/Openbox with synthetic fixtures, not a physical desktop.
+  Ubuntu 24.04 ARM64 passed all 17 decoder/updater checks. No Halo inference or deployment occurred.
+- The installed Linux system updater automatically downloaded, verified and installed the public
+  0.2.6 package over a 0.2.5 validation install, retaining a reinstallable rollback package.
+  The portable updater independently applied the public archive and retained a verified old folder;
+  those portable validation copies were then removed. The WSL validation installation and its
+  enabled timer remain available; physical Linux desktop/compositor/scale testing remains separate.
+- Windows v0.2.7 corrects two failures discovered during real deployment: unresolved ACL account
+  names blocked SYSTEM-task setup, and a thread-owned Mutex failed after asynchronous network work.
+  SID-based permission checks and an exclusive file lock fix those failures; cross-thread lock
+  release is covered by regression checks. Windows v0.2.6 release notes point users to the correction.
+- Windows completed **257 checks / 0 failures**, the separate 48-decode lazy-assembly invariant,
+  guarded publication, installer compilation, and a real per-user scheduled-task smoke test.
+  The corrected SYSTEM task then automatically upgraded a controlled 0.2.6 validation baseline to
+  the exact public **0.2.7+cec033a6ad569224c6337e3d0012fb50551d607c** with no installer interaction,
+  returning **LastTaskResult 0**. The installed location is `C:\Program Files\Image Viewer`.
+- Published Windows setup: `build/ImageViewer-0.2.7-setup.exe`, 61,357,757 bytes, SHA-256
+  `46aea0c53712e7805320bd230633c8a3d6a4ce36851a944e6806d8bb924ae63a`.
+  Its immutable portable ZIP digest is
+  `220d0210fe18aad94fe90a41b229a8b58941820b5701ddb411bc62908c0d5f26`.
+  PR #15 merged as `eac6285`; PR #16 merged as `cec033a`. Final fix CI **37690681012** and
+  Windows release **37691110171** passed, along with C#/Python/Actions CodeQL checks.
+- The repository still uses its previously owner-authorized GitHub-hosted workflows. No runner
+  registration or CI infrastructure was changed. An initial release command continued after local
+  main could not fast-forward and tagged the wrong local revision; run **37688605252** was cancelled
+  before publication and the new 0.2.6 tags were corrected before immutable releases were published.
+- Local `main` remains at `3eb5fab` with its two older owner documentation commits intact; do not
+  reset it to the remote branch. Work continued from verified `origin/main` on isolated task branches.
+- Retained evidence: `build/linux/evidence/` contains the actual Linux screenshots, original hash
+  report, live system/portable update reports, Linux rollback package, SYSTEM task result, unattended
+  Windows upgrade report and installation logs. Keep these as provenance. The pre-edit Windows
+  helper backup is `.codex-tmp/backups/windows-auto-update-0.2.6.ps1`; keep it for diagnosis/rollback.
+  The published Windows installer and Linux package/archive are the current local release packages.
+- Cleaned this task's `linux-readiness`, Windows publish/download/bootstrap staging, superseded
+  task-created installers, intermediate probes, and the 19 hash-verified ARM64 staging files.
+  Native validation processes finished; the owned feature/fix branches were removed after verifying
+  each merged PR's exact head and default-branch target. Existing `linux-viewer-draft` and
+  `shared-review-fixes-20261007` scratch belongs to earlier work and was preserved.
 
 ### 2026-09-22 — v0.2.5 released and deployed to the lab share
 
