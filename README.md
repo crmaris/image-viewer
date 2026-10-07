@@ -155,7 +155,7 @@ The Linux format list and features differ from the Windows version; image origin
 Installed copies automatically check, download and install verified updates. The installer registers
 an hourly task with the same scope as the installation: SYSTEM for all users, or your user account
 for a per-user install. Updates wait until the viewer is closed and run silently without changing
-installation mode, PATH choices or file defaults. Existing installs need the 0.2.6 setup once to
+installation mode, PATH choices or file defaults. Existing installs need the 0.2.7 setup once to
 enable the scheduled updater. Windows portable copies retain manual updating.
 
 ## Build
