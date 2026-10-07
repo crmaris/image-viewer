@@ -22,6 +22,21 @@ packages/
 TestResults/
 testimages/
 /.codex-tmp/
+__pycache__/
+*.pyc
+
+# Agent scratch and isolated worktrees
+.codex/
+.codex-*/
+.agents/
+.claude/worktrees/
+.worktrees/
+*-temp/
+*-temp-*/
+NuGetScratch/
+dotnet-temp*/
+msbuild-temp*/
+.build-tmp/
 
 # OS noise
 Thumbs.db

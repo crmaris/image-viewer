@@ -18,6 +18,9 @@ public static class Program
         StartupTrace.Begin();
         StartupTrace.Mark("main");
 
+        if (args.Length == 1 && args[0] == "--auto-update")
+            return Update.AutoUpdateRunner.RunAsync().GetAwaiter().GetResult();
+
         // Ahead of everything, and ahead of the single-instance handoff in particular. A command
         // has to run in *this* process and print to the console that invoked it; handing it to a
         // window that happens to already be open would produce no output and no exit code worth

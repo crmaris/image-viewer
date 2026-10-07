@@ -1455,7 +1455,9 @@ public sealed class MainWindow : Window
                 _availableUpdate = update;
 
                 ShowToast(update.CanInstallAutomatically
-                    ? $"Version {update.Version.ToString(3)} is available - press Ctrl+U to install."
+                    ? AutoUpdateRunner.OwnInstallMode() == AppUpdateService.InstallMode.Unknown
+                        ? $"Version {update.Version.ToString(3)} is available - press Ctrl+U to install."
+                        : $"Version {update.Version.ToString(3)} will install automatically when Image Viewer is closed."
                     : $"Version {update.Version.ToString(3)} is available - press Ctrl+U to open the release page.");
             }
             catch
@@ -1467,7 +1469,7 @@ public sealed class MainWindow : Window
         timer.Start();
     }
 
-    /// <summary>Downloads and runs the update, after confirming with the user.</summary>
+    /// <summary>Downloads and runs an explicitly requested update without a confirmation dialog.</summary>
     private async void InstallUpdate()
     {
         if (_updateInProgress) return;
@@ -1486,16 +1488,6 @@ public sealed class MainWindow : Window
             AppUpdateService.OpenReleasePage(update.ReleasePageUrl);
             return;
         }
-
-        var notes = string.IsNullOrWhiteSpace(update.Notes) ? "" : $"\n\n{update.Notes}";
-        var confirm = MessageBox.Show(
-            $"Version {update.Version.ToString(3)} is available " +
-            $"(you have {AppUpdateService.CurrentVersion.ToString(3)}).\n\n" +
-            $"Download {update.InstallerName} ({update.InstallerSizeBytes / (1024.0 * 1024):0.#} MB) " +
-            $"and run the installer?\n\nImage Viewer will close so the update can be applied.{notes}",
-            "Update Image Viewer", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes);
-
-        if (confirm != MessageBoxResult.Yes) return;
 
         _updateInProgress = true;
 

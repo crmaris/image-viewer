@@ -11,6 +11,7 @@
 *.yml   text eol=lf
 *.yaml  text eol=lf
 *.sh    text eol=lf
+linux/** text eol=lf
 
 # Binary; never touch.
 *.ico   binary

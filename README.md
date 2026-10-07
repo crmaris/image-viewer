@@ -145,8 +145,18 @@ hijacking your existing defaults â€” set it as default yourself via *Open with â
 
 A portable zip is also published; unzip it anywhere and run `ImageViewer.exe`.
 
-The app checks for updates once a day in the background and tells you if one is available. Nothing
-is downloaded or run without you saying so.
+### Linux companion
+
+A native Linux companion provides folder browsing, full-resolution zoom, view rotation,
+GIF/WebP playback, TIFF pages and safe PNG-copy saving. Download its Debian/Ubuntu `.deb`
+or portable `.tar.gz` from the separate Linux release. See [Linux installation and controls](linux/README.md).
+The Linux format list and features differ from the Windows version; image originals stay unchanged.
+
+Installed copies automatically check, download and install verified updates. The installer registers
+an hourly task with the same scope as the installation: SYSTEM for all users, or your user account
+for a per-user install. Updates wait until the viewer is closed and run silently without changing
+installation mode, PATH choices or file defaults. Existing installs need the 0.2.6 setup once to
+enable the scheduled updater. Windows portable copies retain manual updating.
 
 ## Build
 
