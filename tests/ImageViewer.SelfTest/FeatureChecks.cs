@@ -406,6 +406,13 @@ internal static class FeatureChecks
     {
         section("Updater: launching the installer");
 
+        check("unattended updates are silent and never force-close a viewer",
+            AppUpdateService.BuildUnattendedArguments().Contains("/VERYSILENT") &&
+            AppUpdateService.BuildUnattendedArguments().Contains("/NOCLOSEAPPLICATIONS") &&
+            !AppUpdateService.BuildUnattendedArguments().Any(a => a.StartsWith("/TASKS", StringComparison.Ordinal)));
+        check("automatic updates compare registered directories without case or separator drift",
+            AutoUpdateRunner.SameDirectory(@"C:\Program Files\Image Viewer\", @"c:\program files\image viewer"));
+
         check("an all-users installation is updated as all-users",
             AppUpdateService.BuildInstallerArguments(AppUpdateService.InstallMode.AllUsers)
                 .SequenceEqual((string[])["/ALLUSERS"]));

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Image Viewer
+Comment=View images; originals stay unchanged
+Exec=imageviewer-linux %f
+Icon=image-viewer-linux
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/jpeg;image/png;image/gif;image/bmp;image/tiff;image/webp;image/x-icon;image/x-portable-pixmap;
+StartupNotify=true
+StartupWMClass=ImageViewerLinux

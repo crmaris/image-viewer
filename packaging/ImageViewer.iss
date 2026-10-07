@@ -11,7 +11,7 @@
 
 #define AppName        "Image Viewer"
 #ifndef AppVersion
-  #define AppVersion   "0.2.2"
+  #define AppVersion   "0.2.6"
 #endif
 #define AppPublisher   "Aris Mpitziopoulos"
 #define AppExeName     "ImageViewer.exe"
@@ -76,6 +76,7 @@ Name: "addtopath";  Description: "Add to PATH, so ""imageviewer"" works from a c
 ; .NET extract them to a temp directory on first run, costing about a second - unacceptable for an
 ; application whose entire point is starting fast.
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "windows-auto-update.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
@@ -319,6 +320,9 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Mode, Params: String;
+  ResultCode: Integer;
 begin
   { Only once the files are in place, and only if the user opted into associations. }
   if (CurStep = ssPostInstall) and WizardIsTaskSelected('associate') then
@@ -326,12 +330,35 @@ begin
     RegisterCapabilities();
     RegisterExtensions();
   end;
+  if CurStep = ssPostInstall then
+  begin
+    if IsAdminInstallMode then Mode := 'AllUsers' else Mode := 'CurrentUser';
+    Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+      ExpandConstant('{app}\windows-auto-update.ps1') + '" -Mode ' + Mode +
+      ' -AppExe "' + ExpandConstant('{app}\ImageViewer.exe') + '"';
+    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      RaiseException('Could not configure automatic updates.');
+    if ResultCode <> 0 then RaiseException('Automatic update registration failed.');
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   RootKey: Integer;
+  Mode, Params: String;
+  ResultCode: Integer;
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    if IsAdminInstallMode then Mode := 'AllUsers' else Mode := 'CurrentUser';
+    Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+      ExpandConstant('{app}\windows-auto-update.ps1') + '" -Mode ' + Mode + ' -Remove';
+    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      RaiseException('Could not remove the automatic update task.');
+    if ResultCode <> 0 then RaiseException('Automatic update task removal failed.');
+  end;
   if CurUninstallStep = usPostUninstall then
   begin
     RootKey := GetRegistrationRoot();

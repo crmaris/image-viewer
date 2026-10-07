@@ -16,8 +16,8 @@ namespace ImageViewer.Update;
 /// <para>
 /// Deliberately quiet. The check runs in the background well after the window is up, never blocks
 /// anything, fails silently if the network is unavailable, and is throttled so a viewer opened
-/// fifty times a day does not make fifty API calls. Nothing is downloaded and nothing is executed
-/// without the user explicitly asking for it.
+/// fifty times a day does not make fifty API calls. Installed copies also have a scheduled,
+/// unattended updater that waits until the viewer is closed before applying a verified release.
 /// </para>
 /// <para>
 /// Downloads are restricted to GitHub hosts for the configured repository and must carry a valid
@@ -130,6 +130,8 @@ public sealed class AppUpdateService
 
             // Drafts are invisible to unauthenticated callers; prereleases are skipped on purpose.
             if (root.TryGetProperty("prerelease", out var pre) && pre.GetBoolean()) return null;
+            if (!root.TryGetProperty("immutable", out var immutable) || immutable.ValueKind != JsonValueKind.True)
+                return null;
 
             var tag = root.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
             if (string.IsNullOrWhiteSpace(tag)) return null;
@@ -241,15 +243,16 @@ public sealed class AppUpdateService
     /// </summary>
     /// <returns>Path to the downloaded file.</returns>
     public async Task<string> DownloadInstallerAsync(
-        UpdateInfo update, IProgress<double>? progress, CancellationToken ct)
+        UpdateInfo update, IProgress<double>? progress, CancellationToken ct, string? downloadFolder = null)
     {
         if (update.InstallerUrl is null ||
             !IsAllowedDownload(update.InstallerUrl) ||
             !IsSafeInstallerName(update.InstallerName) ||
-            !IsAllowedDigest(update.InstallerDigest))
+            !IsAllowedDigest(update.InstallerDigest) ||
+            update.InstallerSizeBytes is <= 0 or > 268435456)
             throw new InvalidOperationException("This release has no installer that can be downloaded safely.");
 
-        var folder = Path.Combine(Path.GetTempPath(), "ImageViewerUpdate");
+        var folder = downloadFolder ?? Path.Combine(Path.GetTempPath(), "ImageViewerUpdate");
         Directory.CreateDirectory(folder);
 
         var target = Path.Combine(folder, update.InstallerName!);
@@ -263,6 +266,8 @@ public sealed class AppUpdateService
                    .ConfigureAwait(false))
         {
             response.EnsureSuccessStatusCode();
+            if (response.RequestMessage?.RequestUri is not { } finalUri || !IsAllowedDownload(finalUri.ToString()))
+                throw new InvalidDataException("The installer redirected to an untrusted host.");
 
             var total = response.Content.Headers.ContentLength ?? update.InstallerSizeBytes;
 
@@ -278,6 +283,8 @@ public sealed class AppUpdateService
             {
                 await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
                 written += read;
+                if (written > update.InstallerSizeBytes)
+                    throw new InvalidDataException("The installer exceeds its published size.");
 
                 if (total > 0) progress?.Report(Math.Clamp(written / (double)total, 0, 1));
             }
@@ -402,7 +409,7 @@ public sealed class AppUpdateService
 
     /// <inheritdoc cref="LaunchInstaller(string, string)"/>
     public static Process? LaunchInstaller(
-        string installerPath, string expectedDigest, InstallMode mode)
+        string installerPath, string expectedDigest, InstallMode mode, bool unattended = false)
     {
         if (!File.Exists(installerPath))
             throw new FileNotFoundException("The downloaded installer is no longer there.", installerPath);
@@ -419,11 +426,19 @@ public sealed class AppUpdateService
         {
             FileName = installerPath,
             // Required for the installer's own elevation prompt to appear at all.
-            UseShellExecute = true,
+            UseShellExecute = !unattended,
+            CreateNoWindow = unattended,
         };
 
         foreach (var argument in BuildInstallerArguments(mode))
             start.ArgumentList.Add(argument);
+        if (unattended)
+        {
+            if (mode == InstallMode.Unknown)
+                throw new InvalidOperationException("Unattended installation requires a registered install scope.");
+            foreach (var argument in BuildUnattendedArguments())
+                start.ArgumentList.Add(argument);
+        }
 
         try
         {
@@ -437,6 +452,9 @@ public sealed class AppUpdateService
                 "The update was cancelled at the Windows permission prompt.", ex);
         }
     }
+
+    internal static IReadOnlyList<string> BuildUnattendedArguments() =>
+        ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS"];
 
     /// <summary>Opens the release page in the default browser.</summary>
     public static void OpenReleasePage(string url)

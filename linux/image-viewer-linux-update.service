@@ -1,0 +1,11 @@
+[Unit]
+Description=Install verified Image Viewer Linux updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B /usr/share/image-viewer-linux/update_service.py
+UMask=0077
+PrivateTmp=true
+TimeoutStartSec=300
