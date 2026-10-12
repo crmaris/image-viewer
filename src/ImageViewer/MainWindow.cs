@@ -79,6 +79,7 @@ public sealed class MainWindow : Window
     /// is merely still decoding. Both were observed before this flag existed.
     /// </remarks>
     private bool _isLoading;
+    private bool _firstImageTraced;
 
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _scanCts;
@@ -149,8 +150,10 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
+        StartupTrace.Mark("window-base");
         Title = "Image Viewer";
         RestorePlacement();
+        StartupTrace.Mark("placement");
         Background = Brushes.Black;
         UseLayoutRounding = true;
         SnapsToDevicePixels = true;
@@ -175,6 +178,7 @@ public sealed class MainWindow : Window
         imageSurface.Children.Add(_imageHost);
         _root.Children.Add(imageSurface);
         Content = _root;
+        StartupTrace.Mark("surface");
 
         _interactionSettle = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -421,6 +425,14 @@ public sealed class MainWindow : Window
         Math.Max(1, _root.ActualHeight));
 
     // ---------------------------------------------------------------- opening
+
+    /// <summary>Overlaps the first decode with native window and render initialization.</summary>
+    internal void PrepareInitialImage(string path)
+    {
+        var dpi = DpiScale;
+        _pipeline.PrepareInitialImage(path,
+            (int)Math.Ceiling(Width * dpi), (int)Math.Ceiling(Height * dpi));
+    }
 
     /// <summary>
     /// Opens a path, which may be an image file or a folder.
@@ -852,6 +864,16 @@ public sealed class MainWindow : Window
         UpdateTitle();
         RefreshInfo();
         _filmstrip?.SetCurrentIndex(_index);
+        if (StartupTrace.Enabled && !_firstImageTraced)
+        {
+            _firstImageTraced = true;
+            StartupTrace.Mark("image-ready");
+            Dispatcher.InvokeAsync(() =>
+            {
+                StartupTrace.Mark("image-rendered");
+                StartupTrace.Flush();
+            }, DispatcherPriority.ContextIdle);
+        }
     }
 
     /// <summary>Recomputes and applies the render matrix.</summary>
