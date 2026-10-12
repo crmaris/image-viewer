@@ -7,8 +7,9 @@ image format; Linux's decoder layers and remaining limits are documented in `lin
 with **Space** or the **mouse wheel**.
 
 - **Stack:** C# / .NET 10 (`net10.0-windows`), WPF, x64.
-- **Versions:** Windows **0.2.7** is published and installed at `C:\Program Files\Image Viewer`.
-  Its unattended SYSTEM task is registered and a real automatic upgrade completed with exit 0.
+- **Versions:** Windows **0.2.8** is published and installed at `C:\Program Files\Image Viewer`.
+  The latest all-users manual upgrade completed with exit 0; the previously verified unattended
+  SYSTEM upgrade to 0.2.7 remains recorded below.
   Linux **0.2.7** is published as a Debian/Ubuntu package and portable archive; both unattended
   update paths were verified against the published release. The CLI remains on the machine PATH.
   The lab share's last recorded deployment is Windows 0.2.5; this session did not update that share.
@@ -54,7 +55,7 @@ development fallback.
 before the main suite so the fallback tiers are actually exercised. `--assembly-check` **must** run
 as its own process — see "The one architectural invariant" below.
 
-257 Windows checks currently pass. Linux 0.2.7 validation has 37 passing checks on Ubuntu 22.04 x86-64
+265 Windows checks currently pass. Linux 0.2.7 validation has 37 passing checks on Ubuntu 22.04 x86-64
 (one JPEG XL test skipped because Jammy has no package) and 32 passing decoder/updater checks on
 Ubuntu 24.04 ARM64, including JPEG XL. **Inno Setup 6 is installed** and `build-installer.ps1` produces a
 58.5 MB installer locally in about 40 seconds.
@@ -286,12 +287,18 @@ should account for it.
 
 Startup instrumentation is built in and costs nothing unless enabled: set
 `IMAGEVIEWER_STARTUP_LOG` to a file path and the app appends per-stage timings
-(`main`, `solo`, `startup`, `ctor`, `shown`, `rendered`), measured from `Process.StartTime`.
+(`main`, `solo`, `startup`, `window-base`, `placement`, `surface`, `ctor`, `shown`, `rendered`),
+measured from `Process.StartTime`. `image-ready` and `image-rendered` now distinguish the first
+image presentation from a blank window's first frame; the latter is queued after WPF's render priority.
 
 ---
 
 ## How the speed is actually achieved
 
+- **First decode overlaps window initialization.** The first file starts on a worker before
+  `Window.Show`; the foreground path consumes that same task after the actual viewport is known.
+  Embedded previews are buffered/replayed, superseded requests cannot publish/cache the result,
+  and an insufficient provisional decode is refined for maximization or changed monitor DPI.
 - **Single-instance named pipe.** `SingleInstance.TryHandOff` runs in `Main` *before any WPF type is
   referenced*, so a second launch never initialises a UI framework it is about to discard.
 - **Embedded thumbnail first.** JPEG/HEIC/RAW previews reach the screen ~30× sooner than the full
@@ -538,7 +545,7 @@ test. Note that running it writes the throttle timestamp, so the app will skip i
   Its threat model is `remote`: local file paths and user-launched local commands are core desktop
   app inputs, and treating every local input as hostile produced 87 non-actionable path alerts.
 - GitHub immutable releases are enabled. Existing v0.2.0 predates that setting and remains mutable;
-  current Windows v0.2.7 and Linux linux-v0.2.6 are verified immutable with all asset digests populated.
+  current Windows v0.2.8 and Linux linux-v0.2.7 are verified immutable with all asset digests populated.
 - There is no Authenticode certificate or signing secret in the repository. Do not fabricate a
   self-signed publisher identity; the current executable-integrity chain is GitHub's release asset
   digest, updater SHA-256 verification and release immutability.
@@ -672,6 +679,40 @@ system load before trusting any startup number**, and re-measure when the machin
 ---
 
 ## Session log
+
+### 2026-10-12 — first-image startup overlap, Windows 0.2.8 installed
+
+- Owner reported several seconds on the first local image only. The exact 1084x1451 PNG was
+  checked read-only; its SHA-256 stayed unchanged. The earlier installed 0.2.7 measured
+  903-966 ms to the image title and 1204 ms through the file association under light load.
+  The longer reported light-load delay was not reproduced, so it is not claimed eliminated.
+- Started one decode before native window initialization, reused it for the first foreground
+  load, retained embedded previews/cancellation, and refined undersized provisional results.
+  Added first-image timing stages because `ContentRendered` alone can time an empty window.
+  Matching local runtime-10.0.11 builds gave median title-ready times 687 ms before / 638 ms
+  after with warmed runtime files. Newly copied builds on E: had large cold-I/O outliers;
+  these figures are not a cold-boot guarantee.
+- Actual immutable installed 0.2.8 completed the same image in 1.2-1.6 s while another session's
+  OCR job consumed about 16-17 CPU cores (45% total CPU). That differs from the earlier light-load
+  baseline. AboveNormal priority was tested only on disposable viewer processes, did not reliably
+  improve rendering, and was not added to the app. The OCR job was neither interrupted nor changed.
+- Local and exact-head GitHub checks passed **265 tests / 0 failures**, plus the fresh-process
+  **48 ordinary decodes / no heavy decoder assemblies** invariant. Both actual WPF zoom-rendering
+  checks passed against the reported PNG. Rendering PC supplied bounded drafts through its normal
+  guarded route; speculative findings were rejected after primary verification. No Halo/GX10
+  service, CI routing, decoder dependency or licensing changes were made.
+- PR #21 merged as `0d0d7592a737d0420720e4ed5bfcc1b3273f1a1c`; tag `v0.2.8` points there.
+  PR CI **38243760937**, merged-main CI **38244045285**, CodeQL and release **38244053873** passed.
+  Setup is `build/ImageViewer-0.2.8-setup.exe`, 61,360,108 bytes, SHA-256
+  `c2bcc1e70a12735d71202b7409cba0728de4a8409bdb5f272bf91e5391ff178d`.
+  The GitHub digest and downloaded bytes matched before a real all-users upgrade (exit 0).
+  Installed ProductVersion is `0.2.8+0d0d7592a737d0420720e4ed5bfcc1b3273f1a1c`.
+- Keep `build/evidence/startup-0.2.8/` for measurements, actual CI/release metadata, installation
+  log and the reusable measurement helper. Keep `.codex-tmp/backups/startup-20261012-settings.txt`
+  as the pre-test settings backup; the user's live settings were restored byte-identically.
+  The 0.2.7 installer remains the rollback package. Removed this task's startup staging/checkouts,
+  temporary published builds and four generated zoom PNGs; checked both scratch directories gone.
+  Earlier-session scratch, owner local-main commits and all original image files remain intact.
 
 ### 2026-10-08 — Linux format expansion published and installed
 
