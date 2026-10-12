@@ -14,6 +14,9 @@ public sealed class ImagePipeline : IDisposable
     private readonly ImageLoader _loader;
     private readonly ImageCache _cache;
     private readonly Prefetcher _prefetcher;
+    private readonly CancellationTokenSource _initialLifetime = new();
+    private InitialLoad? _initialLoad;
+    private bool _disposed;
 
     public ImagePipeline(ImageLoader? loader = null, long? cacheBudgetBytes = null)
     {
@@ -25,6 +28,13 @@ public sealed class ImagePipeline : IDisposable
     public long CacheBudgetBytes => _cache.BudgetBytes;
     public long CacheBytesUsed => _cache.CurrentBytes;
     public int CacheCount => _cache.Count;
+
+    /// <summary>Starts the first file on a worker before Window.Show initializes the renderer.</summary>
+    internal void PrepareInitialImage(string path, int maxWidth, int maxHeight)
+    {
+        if (_initialLoad is not null || _disposed) return;
+        _initialLoad = new InitialLoad(_loader, path, maxWidth, maxHeight, _initialLifetime.Token);
+    }
 
     /// <summary>
     /// Returns an already-decoded image, or false. Never touches the disk.
@@ -54,9 +64,29 @@ public sealed class ImagePipeline : IDisposable
         if (_cache.TryGet(path, out var cached, minimumScale))
             return cached;
 
-        var image = await _loader
-            .LoadWithPreviewAsync(path, maxWidth, maxHeight, preview, ct)
-            .ConfigureAwait(false);
+        DecodedImage image;
+        var initial = _initialLoad is { } pending &&
+            string.Equals(path, pending.Path, StringComparison.OrdinalIgnoreCase)
+            ? Interlocked.Exchange(ref _initialLoad, null) : null;
+        if (initial is not null)
+        {
+            initial.ForwardPreview(preview, ct);
+            try { image = await initial.Result.WaitAsync(ct).ConfigureAwait(false); }
+            finally { initial.ForwardPreview(null, CancellationToken.None); }
+            var requiredScale = maxWidth > 0 && maxHeight > 0
+                ? Math.Min(1.0, Math.Min(maxWidth / (double)image.PixelWidth,
+                    maxHeight / (double)image.PixelHeight)) : 1.0;
+            // The real viewport is known only after Show (maximization and per-monitor DPI).
+            // Re-decode if the provisional window bounds were too small for that viewport.
+            if (image.DecodeScale + 1e-3 < requiredScale)
+                image = await _loader.LoadWithPreviewAsync(path, maxWidth, maxHeight, preview, ct)
+                    .ConfigureAwait(false);
+        }
+        else
+        {
+            image = await _loader.LoadWithPreviewAsync(path, maxWidth, maxHeight, preview, ct)
+                .ConfigureAwait(false);
+        }
 
         ct.ThrowIfCancellationRequested();
 
@@ -85,5 +115,53 @@ public sealed class ImagePipeline : IDisposable
     /// </remarks>
     public void Clear() => _cache.Clear();
 
-    public void Dispose() => _prefetcher.Dispose();
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _initialLifetime.Cancel();
+        _initialLifetime.Dispose();
+        _initialLoad = null;
+        _prefetcher.Dispose();
+    }
+
+    private sealed class InitialLoad : IProgress<DecodedImage>
+    {
+        private readonly Lock _gate = new();
+        private DecodedImage? _preview;
+        private IProgress<DecodedImage>? _sink;
+        private CancellationToken _consumerToken;
+        public string Path { get; }
+        public Task<DecodedImage> Result { get; }
+
+        public InitialLoad(ImageLoader loader, string path, int width, int height, CancellationToken ct)
+        {
+            Path = path;
+            Result = Task.Run(() => loader.LoadWithPreviewAsync(path, width, height, this, ct), ct);
+            // Folder launches and superseding handoffs may never consume the initial file.
+            _ = Result.ContinueWith(t => { _ = t.Exception; }, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
+
+        public void Report(DecodedImage value)
+        {
+            lock (_gate)
+            {
+                _preview = value;
+                if (!_consumerToken.IsCancellationRequested) _sink?.Report(value);
+            }
+        }
+
+        public void ForwardPreview(IProgress<DecodedImage>? sink, CancellationToken ct)
+        {
+            lock (_gate)
+            {
+                _sink = sink;
+                _consumerToken = ct;
+                if (_preview is not null && !ct.IsCancellationRequested && !Result.IsCompleted)
+                    sink?.Report(_preview);
+            }
+        }
+    }
 }

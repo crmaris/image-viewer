@@ -37,8 +37,11 @@ public sealed class App : Application
         window.ApplyLaunchOptions(_options);
         StartupTrace.Mark("ctor");
 
-        // Show first, decode second: the window is on screen while the image is still being read,
-        // rather than the user staring at nothing until the decode finishes.
+        if (_options.Paths.Length > 0)
+            window.PrepareInitialImage(_options.Paths[0]);
+
+        // Show immediately while the worker reads/decodes the first file. Open consumes that
+        // same task once the real viewport is known; it never waits before showing the window.
         window.Show();
         StartupTrace.Mark("shown");
 

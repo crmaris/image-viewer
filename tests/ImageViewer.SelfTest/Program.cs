@@ -76,6 +76,7 @@ public static class Program
         RunUpdateChecks();
         RunCacheChecks(dir);
         RunPipelineChecks(dir);
+        InitialImageChecks.Run(Check);
         FeatureChecks.Run(Check, Section);
         CliChecks.Run(Check, Section);
         RunTimings(dir);
