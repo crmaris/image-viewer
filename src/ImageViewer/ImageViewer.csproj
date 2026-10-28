@@ -60,7 +60,7 @@
          for. The only loss is QOI, which the Magick.NET tier picks up anyway. -->
     <PackageReference Include="SixLabors.ImageSharp" Version="2.1.13" />
     <!-- Tier 3: SVG rasterisation (pulls in SkiaSharp). -->
-    <PackageReference Include="Svg.Skia" Version="5.2.1" />
+    <PackageReference Include="Svg.Skia" Version="5.2.3" />
     <!-- Tier 4: last-resort catch-all - PSD, XCF, EXR, JP2 and a few hundred more.
          Q8 rather than Q16: half the memory per pixel and faster, and 8 bits per channel is all a
          screen can show anyway. -->
